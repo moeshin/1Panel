@@ -25,7 +25,7 @@ upx_bin:
 	upx $(BUILD_PATH)/$(CORE_NAME)
 	upx $(BUILD_PATH)/$(AGENT_NAME)
 
-build_frontend:
+build_frontend: clean_assets
 	cd $(WEB_PATH) && npm install && npm run build:pro
 
 build_core_on_linux:
@@ -47,3 +47,6 @@ build_agent_on_darwin:
 build_all: build_frontend build_core_on_linux build_agent_on_linux
 
 build_on_local: clean_assets build_frontend build_core_on_darwin build_agent_on_darwin
+
+test_docs:
+	cd core/cmd/server/docs && go test
