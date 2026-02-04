@@ -1,6 +1,6 @@
 base:
   install_dir: /opt
-  mode: dev
+  mode: stable
   is_demo: false
   is_intl: false
   is_offline: false
@@ -8,7 +8,7 @@ base:
   port: 9999
   username: admin
   password: admin123
-  version: v2.0.0
+  version: v2.1.0
 
 remote_url:
   app_repo: https://apps-assets.fit2cloud.com
@@ -16,7 +16,7 @@ remote_url:
   resource_url: https://resource.fit2cloud.com/1panel/resource/v2
 
 log:
-  level: debug
+  level: error
   time_zone: Asia/Shanghai
   log_name: 1Panel-Core
   log_suffix: .log
