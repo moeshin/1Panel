@@ -92,7 +92,7 @@ const formRef = ref<FormInstance>();
 const acceptParams = (params: DialogProps): void => {
     let items = params.address.split(',');
     for (const item of items) {
-        if (item.indexOf(':') !== -1) {
+        if (item.startsWith(':') || item.startsWith('[')) {
             form.listenAddressV6 = item;
             form.ipv6All = item === '::';
             continue;

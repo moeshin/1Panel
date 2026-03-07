@@ -1721,9 +1721,9 @@ const message = {
         port: 'Port',
         portHelper: 'Specific the port that SSH service listens on.',
         listenAddress: 'Listen address',
-        allV4V6: '0.0.0.0:{0}(IPv4) and :::{0}(IPv6)',
+        allV4V6: '0.0.0.0:{0}(IPv4) and [::]:{0}(IPv6)',
         listenHelper:
-            'Leaving both of IPv4 and IPv6 settings blank will listen on "0.0.0.0:{0}(IPv4)" and ":::{0}(IPv6)".',
+            'Leaving both of IPv4 and IPv6 settings blank will listen on "0.0.0.0:{0}(IPv4)" and "[::]:{0}(IPv6)".',
         addressHelper: 'Specify the address that SSH service listens on.',
         permitRootLogin: 'Permit root',
         rootSettingHelper: 'The default login method for root user is "Allow SSH login".',

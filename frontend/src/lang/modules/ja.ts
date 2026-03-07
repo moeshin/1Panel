@@ -1697,9 +1697,9 @@ const message = {
         port: 'ポート',
         portHelper: 'SSHサービスが耳を傾けるポートを特定します。',
         listenAddress: '住所を聞いてください',
-        allV4V6: '0.0.0.0: {0 }(IPv4）および::: {0}（IPv6）',
+        allV4V6: '0.0.0.0:{0}(IPv4) と [::]:{0}(IPv6)',
         listenHelper:
-            'IPv4とIPv6の両方の設定を空白のままにしておくと、「0.0.0.0:0:0:0}」と「::: {0}（IPv6）」で聞きます。',
+            'IPv4 と IPv6 の両方の設定を空白のままにしておくと、「0.0.0.0:{0}(IPv4)」と「[::]:{0}(IPv6)」で聞きます。',
         addressHelper: 'SSHサービスが耳を傾けるアドレスを指定します。',
         permitRootLogin: 'ルートユーザーログインを許可します',
         rootSettingHelper: 'ルートユーザーのデフォルトのログインメソッドは「SSHログインを許可」です。',

@@ -1747,9 +1747,9 @@ const message = {
         port: 'Port',
         portHelper: 'SSH servisinin dinlediği portu belirtir.',
         listenAddress: 'Dinleme adresi',
-        allV4V6: '0.0.0.0:{0}(IPv4) ve :::{0}(IPv6)',
+        allV4V6: '0.0.0.0:{0}(IPv4) ve [::]:{0}(IPv6)',
         listenHelper:
-            'IPv4 ve IPv6 ayarlarını boş bırakmak, "0.0.0.0:{0}(IPv4)" ve ":::{0}(IPv6)" üzerinde dinlemeyi sağlar.',
+            'IPv4 ve IPv6 ayarlarını boş bırakmak, "0.0.0.0:{0}(IPv4)" ve "[::]:{0}(IPv6)" üzerinde dinlemeyi sağlar.',
         addressHelper: 'SSH servisinin dinlediği adresi belirtir.',
         permitRootLogin: 'Kök kullanıcı girişine izin ver',
         rootSettingHelper: 'Kök kullanıcı için varsayılan giriş yöntemi "SSH girişine izin ver"dir.',

@@ -1727,9 +1727,9 @@ const message = {
         port: 'Porta',
         portHelper: 'Especifique a porta na qual o serviço SSH escutará.',
         listenAddress: 'Endereço de escuta',
-        allV4V6: '0.0.0.0:{0}(IPv4) e :::{0}(IPv6)',
+        allV4V6: '0.0.0.0:{0}(IPv4) e [::]:{0}(IPv6)',
         listenHelper:
-            'Deixar os campos de IPv4 e IPv6 em branco fará com que o serviço escute em "0.0.0.0:{0}(IPv4)" e ":::{0}(IPv6)"',
+            'Deixar os campos de IPv4 e IPv6 em branco fará com que o serviço escute em "0.0.0.0:{0}(IPv4)" e "[::]:{0}(IPv6)"',
         addressHelper: 'Especifique o endereço em que o serviço SSH irá escutar.',
         permitRootLogin: 'Permitir login de usuário root',
         rootSettingHelper: 'O método de login padrão para o usuário root é "Permitir login SSH".',

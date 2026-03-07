@@ -1738,9 +1738,9 @@ const message = {
         port: 'Port',
         portHelper: 'Tentukan port yang didengar oleh perkhidmatan SSH.',
         listenAddress: 'Alamat dengar',
-        allV4V6: '0.0.0.0:{0}(IPv4) dan :::{0}(IPv6)',
+        allV4V6: '0.0.0.0:{0}(IPv4) dan [::]:{0}(IPv6)',
         listenHelper:
-            'Membiarkan tetapan IPv4 dan IPv6 kosong akan mendengar pada "0.0.0.0:{0}(IPv4)" dan ":::{0}(IPv6)".',
+            'Membiarkan tetapan IPv4 dan IPv6 kosong akan mendengar pada "0.0.0.0:{0}(IPv4)" dan "[::]:{0}(IPv6)".',
         addressHelper: 'Tentukan alamat yang didengar oleh perkhidmatan SSH.',
         permitRootLogin: 'Benarkan log masuk pengguna root',
         rootSettingHelper: 'Kaedah log masuk lalai untuk pengguna root ialah "Benarkan log masuk SSH".',
