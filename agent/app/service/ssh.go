@@ -103,7 +103,7 @@ func (u *SSHService) GetSSHInfo() (*dto.SSHInfo, error) {
 		msgArr = append(msgArr, err.Error())
 	}
 	uniqueSet := make(map[string]struct{})
-	getUnique := func(line []byte, kw string, val *string) (ok bool) {
+	getUniqueFirstArg := func(line []byte, kw string, val *string) (ok bool) {
 		if _, ok = uniqueSet[kw]; ok {
 			return false
 		}
@@ -113,30 +113,32 @@ func (u *SSHService) GetSSHInfo() (*dto.SSHInfo, error) {
 		}
 		return ok
 	}
-	getMultiple := func(line []byte, kw string, val *string) (ok bool) {
-		v, ok := getSSHConfFirstArg(line, kw)
-		if ok {
-			if len(*val) != 0 {
-				*val += ("," + v)
-			} else {
-				*val = v
-			}
-		}
-		return ok
-	}
+	var arg string
 	scanner := bufio.NewScanner(bytes.NewReader(sshConf))
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		switch {
-		case getUnique(line, "Port", &data.Port):
-		case getMultiple(line, "ListenAddress", &data.ListenAddress):
-		case getUnique(line, "PasswordAuthentication", &data.PasswordAuthentication):
-		case getUnique(line, "PubkeyAuthentication", &data.PubkeyAuthentication):
-		case getUnique(line, "PermitRootLogin", &data.PermitRootLogin):
+		case getUniqueFirstArg(line, "Port", &arg):
+			portItem, _ := strconv.Atoi(arg)
+			if portItem > 0 && portItem < 65535 {
+				data.Port = arg
+			}
+		case getUniqueFirstArg(line, "PasswordAuthentication", &data.PasswordAuthentication):
+		case getUniqueFirstArg(line, "PubkeyAuthentication", &data.PubkeyAuthentication):
+		case getUniqueFirstArg(line, "PermitRootLogin", &data.PermitRootLogin):
 			if data.PermitRootLogin == "prohibit-password" {
 				data.PermitRootLogin = "without-password"
 			}
-		case getUnique(line, "UseDNS", &data.UseDNS):
+		case getUniqueFirstArg(line, "UseDNS", &data.UseDNS):
+		default:
+			if args, ok := getSSHConfArgs(line, "ListenAddress"); ok {
+				v := strings.Join(args, " ")
+				if len(data.ListenAddress) > 0 {
+					data.ListenAddress += ("," + v)
+				} else {
+					data.ListenAddress = v
+				}
+			}
 		}
 	}
 
@@ -992,8 +994,7 @@ func getSSHConfValue(line []byte, kw string) (v []byte, ok bool) {
 }
 
 func getSSHConfArgs(line []byte, kw string) (args []string, ok bool) {
-	data, ok := getSSHConfValue(line, kw)
-	if ok {
+	if data, ok := getSSHConfValue(line, kw); ok {
 		args, err := shlex.Split(string(data))
 		if err == nil && len(args) > 0 {
 			return args, true
