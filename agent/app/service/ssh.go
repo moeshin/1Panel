@@ -107,14 +107,14 @@ func (u *SSHService) GetSSHInfo() (*dto.SSHInfo, error) {
 		if _, ok = uniqueSet[kw]; ok {
 			return false
 		}
-		v, ok := getSSHConfStringValue(line, kw)
+		v, ok := getSSHConfFirstArg(line, kw)
 		if ok {
 			*val = strings.ToLower(v)
 		}
 		return ok
 	}
 	getMultiple := func(line []byte, kw string, val *string) (ok bool) {
-		v, ok := getSSHConfStringValue(line, kw)
+		v, ok := getSSHConfFirstArg(line, kw)
 		if ok {
 			if len(*val) != 0 {
 				*val += ("," + v)
@@ -991,10 +991,21 @@ func getSSHConfValue(line []byte, kw string) (v []byte, ok bool) {
 	return line[i:], true
 }
 
-func getSSHConfStringValue(line []byte, kw string) (val string, ok bool) {
+func getSSHConfArgs(line []byte, kw string) (args []string, ok bool) {
 	data, ok := getSSHConfValue(line, kw)
 	if ok {
-		val = string(data)
+		args, err := shlex.Split(string(data))
+		if err == nil && len(args) > 0 {
+			return args, true
+		}
+	}
+	return nil, false
+}
+
+func getSSHConfFirstArg(line []byte, kw string) (val string, ok bool) {
+	args, ok := getSSHConfArgs(line, kw)
+	if ok {
+		val = args[0]
 	}
 	return
 }
@@ -1014,11 +1025,7 @@ func scanSSHConf(bb *bytes.Buffer, pathSet map[string]struct{}, confPath string)
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	for scanner.Scan() {
 		line := scanner.Bytes()
-		if argsStr, ok := getSSHConfStringValue(line, "Include"); ok {
-			args, err := shlex.Split(argsStr)
-			if err != nil {
-				continue
-			}
+		if args, ok := getSSHConfArgs(line, "Include"); ok {
 			for _, arg := range args {
 				files, err := filepath.Glob(arg)
 				if err != nil {
@@ -1080,7 +1087,7 @@ func loadSSHPort() string {
 	scanner := bufio.NewScanner(bytes.NewReader(sshConf))
 	for scanner.Scan() {
 		line := scanner.Bytes()
-		if v, ok := getSSHConfStringValue(line, "Port"); ok {
+		if v, ok := getSSHConfFirstArg(line, "Port"); ok {
 			portItem, _ := strconv.Atoi(v)
 			if portItem > 0 && portItem < 65535 {
 				return v
