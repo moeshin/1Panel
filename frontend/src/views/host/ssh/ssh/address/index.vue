@@ -43,7 +43,7 @@ import i18n from '@/lang';
 import { MsgSuccess } from '@/utils/message';
 import { ElMessageBox, FormInstance } from 'element-plus';
 import { updateSSH } from '@/api/modules/host';
-import { checkIp, checkIpV6 } from '@/utils/util';
+import { checkIp, checkIpV6, checkPort } from '@/utils/util';
 
 const emit = defineEmits<{ (e: 'search'): void }>();
 
@@ -67,22 +67,49 @@ const rules = reactive({
     listenAddressV6: [{ validator: checkIPv6, trigger: 'blur' }],
 });
 
-function checkIPv4(rule: any, value: any, callback: any) {
+function checkIPv4(rule: any, value: string, callback: any) {
     if (value === '') {
         callback();
+    }
+
+    let port = '';
+    let i = value.indexOf(' ');
+    if (i > 0) {
+        value = value.substring(0, i);
+    }
+    i = value.indexOf(':');
+    if (i > 0) {
+        port = value.substring(i + 1);
+        value = value.substring(0, i);
     }
     if (checkIp(value)) {
         return callback(new Error(i18n.global.t('commons.rule.ip')));
     }
+    if (port && checkPort(port)) {
+        return callback(new Error(i18n.global.t('commons.rule.port')));
+    }
     callback();
 }
 
-function checkIPv6(rule: any, value: any, callback: any) {
+function checkIPv6(rule: any, value: string, callback: any) {
     if (value === '') {
         callback();
     }
+    let port = '';
+    let i = value.indexOf(' ');
+    if (i > 0) {
+        value = value.substring(0, i);
+    }
+    i = value.indexOf(']:');
+    if (i > 0) {
+        port = value.substring(i + 2);
+        value = value.substring(1, i);
+    }
     if (checkIpV6(value)) {
         return callback(new Error(i18n.global.t('commons.rule.ip')));
+    }
+    if (port && checkPort(port)) {
+        return callback(new Error(i18n.global.t('commons.rule.port')));
     }
     callback();
 }
