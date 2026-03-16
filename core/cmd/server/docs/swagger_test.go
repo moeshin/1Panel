@@ -6,15 +6,33 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"log"
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
+var workDir string
+
+func init() {
+	cwd, err := os.Getwd()
+	if err != nil {
+		log.Panicf("get cwd failed, err: %v", err)
+		return
+	}
+	fmt.Println("cwd:", cwd)
+	workDir, err = filepath.Abs(filepath.Join(cwd, "../../../.."))
+	if err != nil {
+		log.Panicf("get workDir failed, err: %v", err)
+		return
+	}
+	fmt.Println("workDir:", workDir)
+}
+
 func TestGenerateXlog(t *testing.T) {
-	workDir := "/usr/songliu/dev-v2/1Panel"
 	fset := token.NewFileSet()
 
 	apiDirs := []string{workDir + "/agent/app/api/v2", workDir + "/core/app/api/v2", workDir + "/agent/xpack/app/api/v2", workDir + "/core/xpack/app/api/v2"}
@@ -70,45 +88,44 @@ func TestGenerateXlog(t *testing.T) {
 }
 
 func TestGenerateSwaggerDoc(t *testing.T) {
-	workDir := "/usr/songliu/dev-v2/1Panel"
-	swagBin := "/root/go/bin/swag"
+	swagBin := "swag"
 
 	cmd1 := exec.Command(swagBin, "init", "-o", workDir+"/core/cmd/server/docs/docs_agent", "-d", workDir+"/agent", "-g", "../agent/cmd/server/main.go")
 	cmd1.Dir = workDir
 	std1, err := cmd1.CombinedOutput()
 	if err != nil {
-		fmt.Printf("generate swagger doc of agent failed, std1: %v, err: %v", string(std1), err)
+		t.Fatalf("generate swagger doc of agent failed, std1: %v, err: %v", string(std1), err)
 		return
 	}
 	cmd2 := exec.Command(swagBin, "init", "-o", workDir+"/core/cmd/server/docs/docs_core", "-d", workDir+"/core", "-g", "./cmd/server/main.go")
 	cmd2.Dir = workDir
 	std2, err := cmd2.CombinedOutput()
 	if err != nil {
-		fmt.Printf("generate swagger doc of core failed, std1: %v, err: %v", string(std2), err)
+		t.Fatalf("generate swagger doc of core failed, std1: %v, err: %v", string(std2), err)
 		return
 	}
 
 	agentJson := workDir + "/core/cmd/server/docs/docs_agent/swagger.json"
 	agentFile, err := os.ReadFile(agentJson)
 	if err != nil {
-		fmt.Printf("read file docs_agent failed, err: %v", err)
+		t.Fatalf("read file docs_agent failed, err: %v", err)
 		return
 	}
 	var agentSwagger Swagger
 	if err := json.Unmarshal(agentFile, &agentSwagger); err != nil {
-		fmt.Printf("agent json unmarshal failed, err: %v", err)
+		t.Fatalf("agent json unmarshal failed, err: %v", err)
 		return
 	}
 
 	coreJson := workDir + "/core/cmd/server/docs/docs_core/swagger.json"
 	coreFile, err := os.ReadFile(coreJson)
 	if err != nil {
-		fmt.Printf("read file docs_core failed, err: %v", err)
+		t.Fatalf("read file docs_core failed, err: %v", err)
 		return
 	}
 	var coreSwagger Swagger
 	if err := json.Unmarshal(coreFile, &coreSwagger); err != nil {
-		fmt.Printf("core json unmarshal failed, err: %v", err)
+		t.Fatalf("core json unmarshal failed, err: %v", err)
 		return
 	}
 
@@ -134,16 +151,16 @@ func TestGenerateSwaggerDoc(t *testing.T) {
 
 	newJson, err := json.MarshalIndent(newSwagger, "", "\t")
 	if err != nil {
-		fmt.Printf("json marshal for new file failed, err: %v", err)
+		t.Fatalf("json marshal for new file failed, err: %v", err)
 		return
 	}
 	if err := os.WriteFile("swagger.json", newJson, 0640); err != nil {
-		fmt.Printf("write new swagger.json failed, err: %v", err)
+		t.Fatalf("write new swagger.json failed, err: %v", err)
 		return
 	}
 	docTemplate := strings.ReplaceAll(loadDefaultDocs(), "const docTemplate = \"aa\"", fmt.Sprintf("const docTemplate = `%s`", string(newJson)))
 	if err := os.WriteFile(workDir+"/core/cmd/server/docs/docs.go", []byte(docTemplate), 0640); err != nil {
-		fmt.Printf("write new docs.go failed, err: %v", err)
+		t.Fatalf("write new docs.go failed, err: %v", err)
 		return
 	}
 
