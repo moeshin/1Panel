@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/1Panel-dev/1Panel/agent/xpack/xglobal"
 	"net/http"
 	"net/url"
 	"path"
@@ -100,14 +99,12 @@ func (a AgentService) Create(req dto.AgentCreateReq) (*dto.AgentItem, error) {
 	if installs, _ := appInstallRepo.ListBy(context.Background(), repo.WithByLowerName(req.Name)); len(installs) > 0 {
 		return nil, buserr.New("ErrNameIsExist")
 	}
-	if !xglobal.IsXpack {
-		count, _, err := agentRepo.Page(1, 1)
-		if err != nil {
-			return nil, err
-		}
-		if count >= maxCommunityAIAgents {
-			return nil, buserr.WithMap("ErrAgentLimitReached", map[string]interface{}{"max": maxCommunityAIAgents}, nil)
-		}
+	count, _, err := agentRepo.Page(1, 1)
+	if err != nil {
+		return nil, err
+	}
+	if count >= maxCommunityAIAgents {
+		return nil, buserr.WithMap("ErrAgentLimitReached", map[string]interface{}{"max": maxCommunityAIAgents}, nil)
 	}
 	appKey := constant.AppOpenclaw
 	if agentType == constant.AppCopaw {
