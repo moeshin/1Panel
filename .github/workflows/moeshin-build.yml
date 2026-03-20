@@ -1,0 +1,89 @@
+name: Build
+
+on:
+  workflow_dispatch:
+  push:
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get Short Sha
+        id: short-sha
+        run: echo "short_sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Get Frontend Cache Key
+        id: frontend-cache-key
+        run: |
+          cd frontend || exit $?
+          key="$(find . -type f -exec sha256sum {} \; | sort -k 2 | sha256sum | cut -d' ' -f1)"
+          echo "key=$key"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Frontend
+        id: cache-frontend
+        uses: actions/cache@v5
+        with:
+          key: frontend-${{ steps.frontend-cache-key.outputs.key }}
+          path: |
+            core/cmd/server/web/index.html
+            core/cmd/server/web/assets
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        if: steps.cache-frontend.outputs.cache-hit != 'true'
+        with:
+          node-version: '22.19.0'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: NPM Install
+        if: steps.cache-frontend.outputs.cache-hit != 'true'
+        run: cd frontend && npm install
+
+      - name: Build Frontend
+        if: steps.cache-frontend.outputs.cache-hit != 'true'
+        run: make build_frontend
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: |
+            core/go.sum
+            agent/go.sum
+
+      - name: Build Backend
+        run: make build_core_on_linux build_agent_on_linux
+
+      - name: Print MD5
+        run: md5sum build/*
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: 1panel-${{ steps.short-sha.outputs.short_sha }}
+          path: build/
+
+      - name: Compress build
+        run: tar -czvf build.tar.gz build
+
+      - name: Delete prerelease assets
+        uses: 8Mi-Tech/delete-release-assets-action@main
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          tag: prerelease-${{ github.ref_name }}
+          deleteOnlyFromDrafts: false
+
+      - name: Prerelease
+        uses: softprops/action-gh-release@v2.4.2
+        with:
+          prerelease: true
+          name: 'Prerelease: ${{ github.ref_name }}'
+          tag_name: prerelease-${{ github.ref_name }}
+          body: "Build for commit ${{ steps.short-sha.outputs.short_sha }}"
+          files: build.tar.gz
