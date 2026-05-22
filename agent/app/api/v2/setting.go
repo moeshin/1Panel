@@ -1,15 +1,12 @@
 package v2
 
 import (
-	"encoding/json"
-
 	"github.com/1Panel-dev/1Panel/agent/app/api/v2/helper"
 	"github.com/1Panel-dev/1Panel/agent/app/dto"
-	"github.com/1Panel-dev/1Panel/agent/app/model"
+	"github.com/1Panel-dev/1Panel/agent/app/dto/request"
 	"github.com/1Panel-dev/1Panel/agent/global"
 	"github.com/1Panel-dev/1Panel/agent/utils/ssh"
 	"github.com/gin-gonic/gin"
-	"github.com/pkg/errors"
 )
 
 // @Tags System Setting
@@ -20,6 +17,15 @@ import (
 // @Router /settings/search [post]
 func (b *BaseApi) GetSettingInfo(c *gin.Context) {
 	setting, err := settingService.GetSettingInfo()
+	if err != nil {
+		helper.InternalServer(c, err)
+		return
+	}
+	helper.SuccessWithData(c, setting)
+}
+
+func (b *BaseApi) GetTerminalAISettingInfo(c *gin.Context) {
+	setting, err := settingService.GetTerminalAIInfo()
 	if err != nil {
 		helper.InternalServer(c, err)
 		return
@@ -40,14 +46,14 @@ func (b *BaseApi) GetSystemAvailable(c *gin.Context) {
 // @Tags System Setting
 // @Summary Update system setting
 // @Accept json
-// @Param request body dto.SettingUpdate true "request"
+// @Param request body dto.AgentSettingUpdate true "request"
 // @Success 200
 // @Security ApiKeyAuth
 // @Security Timestamp
 // @Router /settings/update [post]
 // @x-panel-log {"bodyKeys":["key","value"],"paramKeys":[],"BeforeFunctions":[],"formatZH":"修改系统配置 [key] => [value]","formatEN":"update system setting [key] => [value]"}
 func (b *BaseApi) UpdateSetting(c *gin.Context) {
-	var req dto.SettingUpdate
+	var req dto.AgentSettingUpdate
 	if err := helper.CheckBindAndValidate(&req, c); err != nil {
 		return
 	}
@@ -57,6 +63,85 @@ func (b *BaseApi) UpdateSetting(c *gin.Context) {
 		return
 	}
 	helper.Success(c)
+}
+
+func (b *BaseApi) UpdateTerminalAISetting(c *gin.Context) {
+	var req dto.TerminalAIInfo
+	if err := helper.CheckBindAndValidate(&req, c); err != nil {
+		return
+	}
+
+	if err := settingService.UpdateTerminalAI(req); err != nil {
+		helper.InternalServer(c, err)
+		return
+	}
+	helper.Success(c)
+}
+
+func (b *BaseApi) GetFileManageAISettingInfo(c *gin.Context) {
+	setting, err := settingService.GetFileManageAIInfo()
+	if err != nil {
+		helper.InternalServer(c, err)
+		return
+	}
+	helper.SuccessWithData(c, setting)
+}
+
+func (b *BaseApi) UpdateFileManageAISetting(c *gin.Context) {
+	var req dto.FileManageAIInfo
+	if err := helper.CheckBindAndValidate(&req, c); err != nil {
+		return
+	}
+	if err := settingService.UpdateFileManageAI(req); err != nil {
+		helper.InternalServer(c, err)
+		return
+	}
+	helper.Success(c)
+}
+
+// @Tags System Setting
+// @Summary Load file history setting info
+// @Success 200 {object} response.FileHistorySettingInfo
+// @Security ApiKeyAuth
+// @Security Timestamp
+// @Router /settings/file-history/search [post]
+func (b *BaseApi) GetFileHistorySettingInfo(c *gin.Context) {
+	setting, err := settingService.GetFileHistorySettingInfo()
+	if err != nil {
+		helper.InternalServer(c, err)
+		return
+	}
+	helper.SuccessWithData(c, setting)
+}
+
+// @Tags System Setting
+// @Summary Update file history setting
+// @Accept json
+// @Param request body request.FileHistorySettingUpdate true "request"
+// @Success 200
+// @Security ApiKeyAuth
+// @Security Timestamp
+// @Router /settings/file-history/update [post]
+func (b *BaseApi) UpdateFileHistorySetting(c *gin.Context) {
+	var req request.FileHistorySettingUpdate
+	if err := helper.CheckBindAndValidate(&req, c); err != nil {
+		return
+	}
+	if err := settingService.UpdateFileHistorySetting(req); err != nil {
+		helper.InternalServer(c, err)
+		return
+	}
+	helper.Success(c)
+}
+
+// @Tags System Setting
+// @Summary Load website dir
+// @Success 200 {string} path
+// @Security ApiKeyAuth
+// @Security Timestamp
+// @Router /settings/website/dir [get]
+func (b *BaseApi) LoadWebsiteDir(c *gin.Context) {
+	helper.SuccessWithData(c, settingService.GetWebsiteDir())
 }
 
 // @Tags System Setting
@@ -144,12 +229,8 @@ func (b *BaseApi) SaveLocalConn(c *gin.Context) {
 }
 
 func loadLocalConn() (*ssh.SSHClient, error) {
-	connInfoInDB := settingService.GetSettingByKey("LocalSSHConn")
-	if len(connInfoInDB) == 0 {
-		return nil, errors.New("no such ssh conn info in db!")
-	}
-	var connInDB model.LocalConnInfo
-	if err := json.Unmarshal([]byte(connInfoInDB), &connInDB); err != nil {
+	connInDB, err := settingService.GetLocalConnForSSH()
+	if err != nil {
 		return nil, err
 	}
 	sshInfo := ssh.ConnInfo{
@@ -162,23 +243,6 @@ func loadLocalConn() (*ssh.SSHClient, error) {
 		PassPhrase: []byte(connInDB.PassPhrase),
 	}
 	return ssh.NewClient(sshInfo)
-}
-
-// @Tags System Setting
-// @Summary Load system setting by key
-// @Param key path string true "key"
-// @Success 200 {object} dto.SettingInfo
-// @Security ApiKeyAuth
-// @Security Timestamp
-// @Router /settings/get/{key} [get]
-func (b *BaseApi) GetSettingByKey(c *gin.Context) {
-	key := c.Param("key")
-	if len(key) == 0 {
-		helper.BadRequest(c, errors.New("key is empty"))
-		return
-	}
-	value := settingService.GetSettingByKey(key)
-	helper.SuccessWithData(c, value)
 }
 
 // @Tags System Setting

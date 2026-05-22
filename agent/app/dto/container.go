@@ -48,6 +48,34 @@ type ContainerOptions struct {
 	State string `json:"state"`
 }
 
+type ContainerFileReq struct {
+	ContainerID string `json:"containerID" validate:"required"`
+	Path        string `json:"path" validate:"required"`
+}
+
+type ContainerFileBatchDeleteReq struct {
+	ContainerID string   `json:"containerID" validate:"required"`
+	Paths       []string `json:"paths" validate:"required,min=1,dive,required"`
+}
+
+type ContainerFileInfo struct {
+	Name    string `json:"name"`
+	Path    string `json:"path"`
+	IsDir   bool   `json:"isDir"`
+	IsLink  bool   `json:"isLink"`
+	LinkTo  string `json:"linkTo"`
+	Size    int64  `json:"size"`
+	Mode    string `json:"mode"`
+	ModTime string `json:"modTime"`
+}
+
+type ContainerFileContent struct {
+	Content   string `json:"content"`
+	Size      int64  `json:"size"`
+	Truncated bool   `json:"truncated"`
+	IsBinary  bool   `json:"isBinary"`
+}
+
 type ContainerStatus struct {
 	Created    int `json:"created"`
 	Running    int `json:"running"`
@@ -95,9 +123,15 @@ type ContainerOperate struct {
 	Privileged      bool           `json:"privileged"`
 	AutoRemove      bool           `json:"autoRemove"`
 	Volumes         []VolumeHelper `json:"volumes"`
+	ExtraHosts      []ExtraHost    `json:"extraHosts"`
 	Labels          []string       `json:"labels"`
 	Env             []string       `json:"env"`
 	RestartPolicy   string         `json:"restartPolicy"`
+}
+
+type ExtraHost struct {
+	Hostname string `json:"hostname"`
+	IP       string `json:"ip"`
 }
 type ContainerNetwork struct {
 	Network string `json:"network"`
@@ -253,16 +287,17 @@ type BatchDelete struct {
 }
 
 type ComposeInfo struct {
-	Name           string             `json:"name"`
-	CreatedAt      string             `json:"createdAt"`
-	CreatedBy      string             `json:"createdBy"`
-	ContainerCount int                `json:"containerCount"`
-	RunningCount   int                `json:"runningCount"`
-	ConfigFile     string             `json:"configFile"`
-	Workdir        string             `json:"workdir"`
-	Path           string             `json:"path"`
-	Containers     []ComposeContainer `json:"containers"`
-	Env            string             `json:"env"`
+	Name              string             `json:"name"`
+	CreatedAt         string             `json:"createdAt"`
+	CreatedBy         string             `json:"createdBy"`
+	ContainerCount    int                `json:"containerCount"`
+	RunningCount      int                `json:"runningCount"`
+	ConfigFile        string             `json:"configFile"`
+	Workdir           string             `json:"workdir"`
+	ComposeFileExists bool               `json:"composeFileExists"`
+	Path              string             `json:"path"`
+	Containers        []ComposeContainer `json:"containers"`
+	Env               string             `json:"env"`
 }
 type ComposeContainer struct {
 	ContainerID string   `json:"containerID"`
@@ -279,7 +314,7 @@ type ComposeCreate struct {
 	Path      string `json:"path"`
 	Template  uint   `json:"template"`
 	Env       string `json:"env"`
-	PullImage *bool  `json:"pullImage,omitempty"`
+	ForcePull bool   `json:"forcePull"`
 }
 type ComposeOperation struct {
 	Name      string `json:"name" validate:"required"`
@@ -289,11 +324,13 @@ type ComposeOperation struct {
 	Force     bool   `json:"force"`
 }
 type ComposeUpdate struct {
+	TaskID     string `json:"taskID"`
 	Name       string `json:"name" validate:"required"`
 	Path       string `json:"path" validate:"required"`
 	DetailPath string `json:"detailPath"`
 	Content    string `json:"content" validate:"required"`
 	Env        string `json:"env"`
+	ForcePull  bool   `json:"forcePull"`
 }
 type ComposeLogClean struct {
 	Name       string `json:"name" validate:"required"`
@@ -305,6 +342,7 @@ type ContainerLog struct {
 	Container     string `json:"container" validate:"required"`
 	Since         string `json:"since"`
 	Tail          uint   `json:"tail"`
+	Timestamp     bool   `json:"timestamp"`
 	ContainerType string `json:"containerType"`
 }
 
@@ -314,5 +352,6 @@ type StreamLog struct {
 	Since     string
 	Follow    bool
 	Tail      string
+	Timestamp bool
 	Type      string
 }

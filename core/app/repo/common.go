@@ -5,6 +5,7 @@ import (
 
 	"github.com/1Panel-dev/1Panel/core/constant"
 	"github.com/1Panel-dev/1Panel/core/global"
+	"github.com/1Panel-dev/1Panel/core/utils/re"
 	"gorm.io/gorm"
 )
 
@@ -24,9 +25,26 @@ func WithByIDs(ids []uint) global.DBOption {
 		return g.Where("id in (?)", ids)
 	}
 }
+func WithByStringIDs(ids []string) global.DBOption {
+	var idItems []uint
+	for _, id := range ids {
+		var idItem uint
+		if _, err := fmt.Sscanf(id, "%d", &idItem); err == nil && idItem != 0 {
+			idItems = append(idItems, idItem)
+		}
+	}
+	return func(g *gorm.DB) *gorm.DB {
+		return g.Where("id IN (?)", idItems)
+	}
+}
 func WithByName(name string) global.DBOption {
 	return func(g *gorm.DB) *gorm.DB {
 		return g.Where("`name` = ?", name)
+	}
+}
+func WithByUserID(userID string) global.DBOption {
+	return func(g *gorm.DB) *gorm.DB {
+		return g.Where("user_id = ?", userID)
 	}
 }
 func WithoutByName(name string) global.DBOption {
@@ -61,17 +79,19 @@ func WithByNode(node string) global.DBOption {
 	}
 }
 
-func WithOrderBy(orderStr string) global.DBOption {
-	if orderStr == "createdAt" {
-		orderStr = "created_at"
-	}
-	return func(g *gorm.DB) *gorm.DB {
-		return g.Order(orderStr)
-	}
+func WithOrderDesc(orderBy string) global.DBOption {
+	return WithOrderRuleBy(orderBy, constant.OrderDesc)
+}
+
+func WithOrderAsc(orderBy string) global.DBOption {
+	return WithOrderRuleBy(orderBy, constant.OrderAsc)
 }
 
 func WithOrderRuleBy(orderBy, order string) global.DBOption {
 	if orderBy == "createdAt" {
+		orderBy = "created_at"
+	}
+	if !re.GetRegex(re.OrderByValidationPattern).MatchString(orderBy) {
 		orderBy = "created_at"
 	}
 	switch order {

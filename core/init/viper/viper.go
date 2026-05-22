@@ -5,12 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path"
-	"strings"
 
 	"github.com/1Panel-dev/1Panel/core/cmd/server/conf"
 	"github.com/1Panel-dev/1Panel/core/global"
-	"github.com/1Panel-dev/1Panel/core/utils/cmd"
-	"github.com/1Panel-dev/1Panel/core/utils/common"
+	"github.com/1Panel-dev/1Panel/core/utils/ctl_conf"
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
@@ -21,7 +19,7 @@ func Init() {
 	port := "9999"
 	mode := ""
 	version := "v2.0.0"
-	username, password, entrance, language := "", "", "", "zh"
+	username, password, entrance, language, edition := "", "", "", "zh", ""
 	v := viper.NewWithOptions()
 	v.SetConfigType("yaml")
 
@@ -37,20 +35,21 @@ func Init() {
 		v.SetConfigName("app")
 		v.AddConfigPath(path.Join("/opt/1panel/conf"))
 		if err := v.ReadInConfig(); err != nil {
-			panic(fmt.Errorf("Fatal error config file: %s \n", err))
+			panic(fmt.Errorf("fatal error config file: %s", err))
 		}
 	} else {
-		baseDir = common.LoadParams("BASE_DIR")
-		port = common.LoadParams("ORIGINAL_PORT")
-		version = common.LoadParams("ORIGINAL_VERSION")
-		username = common.LoadParams("ORIGINAL_USERNAME")
-		password = common.LoadParams("ORIGINAL_PASSWORD")
-		entrance = common.LoadParams("ORIGINAL_ENTRANCE")
-		language = common.LoadParams("LANGUAGE")
+		baseDir = ctl_conf.Load("BASE_DIR")
+		port = ctl_conf.Load("ORIGINAL_PORT")
+		version = ctl_conf.Load("ORIGINAL_VERSION")
+		username = ctl_conf.Load("ORIGINAL_USERNAME")
+		password = ctl_conf.Load("ORIGINAL_PASSWORD")
+		entrance = ctl_conf.Load("ORIGINAL_ENTRANCE")
+		language = ctl_conf.Load("LANGUAGE")
+		edition = ctl_conf.LoadWithoutPanic("PANEL_EDITION")
 
 		reader := bytes.NewReader(conf.AppYaml)
 		if err := v.ReadConfig(reader); err != nil {
-			panic(fmt.Errorf("Fatal error config file: %s \n", err))
+			panic(fmt.Errorf("fatal error config file: %s", err))
 		}
 	}
 	v.OnConfigChange(func(e fsnotify.Event) {
@@ -82,17 +81,18 @@ func Init() {
 		if serverConfig.Conn.Entrance != "" {
 			entrance = serverConfig.Conn.Entrance
 		}
-		if serverConfig.Base.IsIntl {
-			language = "en"
-		}
 	}
 
 	global.CONF = serverConfig
 	global.CONF.Base.InstallDir = baseDir
 	global.CONF.Base.IsDemo = v.GetBool("base.is_demo")
-	global.CONF.Base.IsIntl = v.GetBool("base.is_intl")
 	global.CONF.Base.IsFxplay = v.GetBool("base.is_fxplay")
-	global.CONF.Base.IsOffLine = v.GetBool("base.is_offline")
+	global.CONF.Base.IsOffline = v.GetBool("base.is_offline")
+	if edition == "intl" {
+		global.CONF.Base.Edition = "intl"
+	} else {
+		global.CONF.Base.Edition = "cn"
+	}
 	global.CONF.Base.Version = version
 	global.CONF.Base.Username = username
 	global.CONF.Base.Password = password
@@ -104,9 +104,5 @@ func Init() {
 }
 
 func loadChangeInfo() string {
-	stdout, err := cmd.RunDefaultWithStdoutBashC("grep '^CHANGE_USER_INFO=' /usr/local/bin/1pctl | cut -d'=' -f2")
-	if err != nil {
-		return ""
-	}
-	return strings.ReplaceAll(stdout, "\n", "")
+	return ctl_conf.LoadWithoutPanic("CHANGE_USER_INFO")
 }

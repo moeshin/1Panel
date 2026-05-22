@@ -48,6 +48,10 @@ export const Languages = [
         value: ['md'],
     },
     {
+        label: 'dockerfile',
+        value: ['dockerfile'],
+    },
+    {
         label: 'yaml',
         value: ['yml', 'yaml'],
     },
@@ -271,6 +275,10 @@ export const DNSTypes = [
     {
         label: 'DNSPod (' + i18n.global.t('ssl.deprecated') + ')',
         value: 'DnsPod',
+    },
+    {
+        label: 'Technitium',
+        value: 'Technitium',
     },
 ];
 

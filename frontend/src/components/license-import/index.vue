@@ -3,7 +3,7 @@
         <DialogPro v-model="open" class="level-up-pro" @close="handleClose">
             <div style="text-align: center" v-loading="loading">
                 <span class="text-3xl font-medium title">
-                    {{ isImport ? $t('license.importLicense') : $t('license.levelUpPro') }}
+                    {{ $t('license.importLicense') }}
                 </span>
                 <el-row type="flex" justify="center" class="mt-6">
                     <el-col :span="22">
@@ -45,10 +45,10 @@
                     plain
                     @click="submit"
                 >
-                    {{ isImport ? $t('commons.button.confirm') : $t('commons.button.power') }}
+                    {{ $t('commons.button.power') }}
                 </el-button>
                 <div class="mt-3 mb-5">
-                    <el-button text type="primary" @click="toLxware">{{ $t('license.knowMorePro') }}</el-button>
+                    <el-button text type="primary" @click="toEdition">{{ $t('license.knowMorePro') }}</el-button>
                 </div>
             </div>
         </DialogPro>
@@ -59,12 +59,12 @@
 import i18n from '@/lang';
 import { ref } from 'vue';
 import { MsgSuccess } from '@/utils/message';
-import { uploadLicense } from '@/api/modules/setting';
+import { uploadLicense, uploadEnterpriseLicense } from '@/api/modules/setting';
 import DockerProxy from '@/components/docker-proxy/index.vue';
-import { GlobalStore } from '@/store';
 import { UploadFile, UploadFiles, UploadInstance, UploadProps, UploadRawFile, genFileId } from 'element-plus';
 import { getXpackSettingForTheme, loadMasterProductProFromDB, loadProductProFromDB } from '@/utils/xpack';
-const globalStore = GlobalStore();
+import { useGlobalStore } from '@/composables/useGlobalStore';
+const { isIntl, isEnterprise, currentNode, isProductPro, isMasterProductPro, isEnterpriseLicensed } = useGlobalStore();
 
 const em = defineEmits(['search']);
 
@@ -111,11 +111,11 @@ const handleExceed: UploadProps['onExceed'] = (files) => {
     uploadRef.value!.handleStart(file);
 };
 
-const toLxware = () => {
-    if (!globalStore.isIntl) {
-        window.open('https://www.lxware.cn/1panel' + '', '_blank', 'noopener,noreferrer');
+const toEdition = () => {
+    if (!isIntl.value) {
+        window.open('https://1panel.cn/versions.html' + '', '_blank', 'noopener,noreferrer');
     } else {
-        window.open('https://1panel.hk/pricing' + '', '_blank', 'noopener,noreferrer');
+        window.open('https://1panel.pro/pricing' + '', '_blank', 'noopener,noreferrer');
     }
 };
 
@@ -126,40 +126,59 @@ const submit = async () => {
     const file = uploaderFiles.value[0];
     const formData = new FormData();
     formData.append('file', file.raw);
+    if (isEnterprise.value) {
+        loading.value = true;
+        await uploadEnterpriseLicense(formData)
+            .then(async () => {
+                handleAfterSubmit();
+            })
+            .catch(() => {
+                loading.value = false;
+                uploadRef.value!.clearFiles();
+                uploaderFiles.value = [];
+            });
+        return;
+    }
     if (oldLicense.value) {
         formData.append('oldLicenseName', oldLicense.value);
     }
     if (!isImport.value) {
-        formData.append('currentNode', globalStore.currentNode);
+        formData.append('currentNode', currentNode.value);
         formData.append('withDockerRestart', withDockerRestart.value);
     }
     formData.append('isForce', isForce.value);
     loading.value = true;
     await uploadLicense(oldLicense.value, formData)
         .then(async () => {
-            loading.value = false;
-            uploadRef.value!.clearFiles();
-            uploaderFiles.value = [];
-            open.value = false;
-            MsgSuccess(i18n.global.t('commons.msg.operationSuccess'));
-            if (!isImport.value) {
-                globalStore.isProductPro = true;
-                globalStore.isMasterProductPro = true;
-            }
-            if (!withoutReload.value) {
-                loadMasterProductProFromDB();
-                loadProductProFromDB();
-                getXpackSettingForTheme();
-                window.location.reload();
-            } else {
-                em('search');
-            }
+            handleAfterSubmit();
         })
         .catch(() => {
             loading.value = false;
             uploadRef.value!.clearFiles();
             uploaderFiles.value = [];
         });
+};
+
+const handleAfterSubmit = () => {
+    loading.value = false;
+    uploadRef.value!.clearFiles();
+    uploaderFiles.value = [];
+    open.value = false;
+    MsgSuccess(i18n.global.t('commons.msg.operationSuccess'));
+    if (!isImport.value) {
+        if (!isEnterprise.value) isProductPro.value = true;
+        isMasterProductPro.value = true;
+    } else {
+        isEnterpriseLicensed.value = true;
+    }
+    if (!withoutReload.value) {
+        loadMasterProductProFromDB();
+        loadProductProFromDB();
+        getXpackSettingForTheme();
+        window.location.reload();
+    } else {
+        em('search');
+    }
 };
 
 defineExpose({

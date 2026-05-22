@@ -183,13 +183,21 @@
                             <el-input v-model.trim="account.authorization['secretKey']"></el-input>
                         </el-form-item>
                     </div>
+                    <div v-if="account.type === 'Technitium'">
+                        <el-form-item label="BASE URL" prop="authorization.baseURL" :rules="[Rules.requiredInput]">
+                            <el-input v-model.trim="account.authorization['baseURL']"></el-input>
+                        </el-form-item>
+                        <el-form-item label="Token" prop="authorization.token">
+                            <el-input v-model.trim="account.authorization['token']"></el-input>
+                        </el-form-item>
+                    </div>
                 </el-form>
             </el-col>
         </el-row>
         <template #footer>
             <span class="dialog-footer">
                 <el-button @click="handleClose" :disabled="loading">{{ $t('commons.button.cancel') }}</el-button>
-                <el-button type="primary" @click="submit(accountForm)" :disabled="loading">
+                <el-button v-permission type="primary" @click="submit(accountForm)" :disabled="loading">
                     {{ $t('commons.button.confirm') }}
                 </el-button>
             </span>

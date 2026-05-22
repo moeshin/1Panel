@@ -4,8 +4,23 @@
             <Tags @change="changeTag" hideKey="Runtime" />
         </template>
         <template #leftToolBar>
-            <el-button @click="sync" type="primary" plain v-if="mode === 'installed' && data != null">
+            <el-button @click="sync" type="primary" plain v-if="mode === 'installed' && !sortMode && data != null">
                 {{ $t('commons.button.refresh') }}
+            </el-button>
+            <el-button
+                @click="enterSortMode"
+                v-permission
+                type="primary"
+                plain
+                v-if="mode === 'installed' && !sortMode && data != null"
+            >
+                {{ $t('app.sortMode') }}
+            </el-button>
+            <el-button @click="saveSortOrder" type="primary" v-if="sortMode">
+                {{ $t('commons.button.confirm') }}
+            </el-button>
+            <el-button @click="exitSortMode" plain v-if="sortMode">
+                {{ $t('commons.button.cancel') }}
             </el-button>
             <el-button @click="openIgnore" type="primary" plain v-if="mode === 'upgrade'">
                 {{ $t('app.showIgnore') }}
@@ -17,7 +32,7 @@
         <template #main>
             <div>
                 <MainDiv :heightDiff="mode === 'upgrade' ? 280 : 300">
-                    <el-alert type="info" :closable="false" v-if="mode === 'installed'">
+                    <el-alert type="info" :closable="false" v-if="mode === 'installed' && !isIntl">
                         <template #title>
                             <span class="flx-align-center">
                                 {{ $t('app.installHelper') }}
@@ -38,10 +53,11 @@
                             <img src="@/assets/images/no_update_app.svg" />
                         </div>
                     </div>
-                    <el-row :gutter="5">
+                    <el-row :gutter="5" ref="sortContainer">
                         <el-col
                             v-for="(installed, index) in data"
-                            :key="index"
+                            :key="installed.id"
+                            :data-sort-index="index"
                             :xs="24"
                             :sm="24"
                             :md="24"
@@ -53,6 +69,7 @@
                                 :mode="mode"
                                 :defaultLink="defaultLink"
                                 :currentNode="currentNode"
+                                :sortMode="sortMode"
                                 @open-detail="openDetail(installed.appKey)"
                                 @open-backups="openBackups(installed)"
                                 @open-log="openLog(installed)"
@@ -70,19 +87,20 @@
                                         class="d-button flex flex-wrap items-center justify-start gap-1.5"
                                         v-if="mode === 'installed' && installed.status != 'Installing'"
                                     >
-                                        <el-button
-                                            class="app-button"
-                                            v-for="(button, key) in buttons"
-                                            :key="key"
-                                            :type="button.disabled && button.disabled(installed) ? 'info' : ''"
-                                            plain
-                                            round
-                                            size="small"
-                                            @click="button.click(installed)"
-                                            :disabled="button.disabled && button.disabled(installed)"
-                                        >
-                                            {{ button.label }}
-                                        </el-button>
+                                        <template v-for="(button, key) in buttons" :key="key">
+                                            <el-button
+                                                v-permission
+                                                class="app-button"
+                                                :type="button.disabled && button.disabled(installed) ? 'info' : ''"
+                                                plain
+                                                round
+                                                size="small"
+                                                @click="button.click(installed)"
+                                                :disabled="button.disabled && button.disabled(installed)"
+                                            >
+                                                {{ button.label }}
+                                            </el-button>
+                                        </template>
                                     </div>
                                 </template>
                             </AppCard>
@@ -90,7 +108,7 @@
                     </el-row>
                 </MainDiv>
             </div>
-            <div class="page-button" v-if="mode === 'installed'">
+            <div class="page-button" v-if="mode === 'installed' && !sortMode">
                 <fu-table-pagination
                     v-model:current-page="paginationConfig.currentPage"
                     v-model:page-size="paginationConfig.pageSize"
@@ -132,22 +150,26 @@ import ComposeLogs from '@/components/log/compose/index.vue';
 import IgnoreApp from '@/views/app-store/installed/ignore/create/index.vue';
 import TerminalDialog from '@/views/container/container/terminal/index.vue';
 
-import { searchAppInstalled, installedOp, appInstalledDeleteCheck } from '@/api/modules/app';
-import { onMounted, onUnmounted, reactive, ref } from 'vue';
+import { searchAppInstalled, installedOp, appInstalledDeleteCheck, updateAppInstallSort } from '@/api/modules/app';
+import { onMounted, onUnmounted, reactive, ref, nextTick } from 'vue';
+import Sortable from 'sortablejs';
 import i18n from '@/lang';
 import { ElMessageBox } from 'element-plus';
 import { App } from '@/api/interface/app';
-import { jumpToPath } from '@/utils/util';
+import { jumpToPath } from '@/utils/router';
 import { useRouter } from 'vue-router';
 import { MsgSuccess } from '@/utils/message';
-import { getAgentSettingByKey } from '@/api/modules/setting';
+import { getAgentSettingInfo } from '@/api/modules/setting';
 import { routerToFileWithPath, routerToNameWithQuery } from '@/utils/router';
 import { useGlobalStore } from '@/composables/useGlobalStore';
-const { currentNode, isMaster, currentNodeAddr } = useGlobalStore();
+const { currentNode, isMaster, currentNodeAddr, isIntl } = useGlobalStore();
 
 const data = ref<any>();
 const loading = ref(false);
 const syncLoading = ref(false);
+const sortMode = ref(false);
+const sortContainer = ref();
+let sortableInstance: Sortable | null = null;
 let timer: NodeJS.Timer | null = null;
 const paginationConfig = reactive({
     cacheSizeKey: 'app-installed-page-size',
@@ -299,6 +321,7 @@ const buttons = [
         click: (row: any) => {
             openOperate(row, 'rebuild');
         },
+        permission: true,
         disabled: (row: any) => {
             return (
                 row.status === 'DownloadErr' ||
@@ -313,6 +336,7 @@ const buttons = [
         click: (row: any) => {
             openOperate(row, 'restart');
         },
+        permission: true,
         disabled: (row: any) => {
             return (
                 row.status === 'DownloadErr' ||
@@ -327,6 +351,7 @@ const buttons = [
         click: (row: any) => {
             openOperate(row, 'start');
         },
+        permission: true,
         disabled: (row: any) => {
             return (
                 row.status === 'Running' ||
@@ -343,6 +368,7 @@ const buttons = [
         click: (row: any) => {
             openOperate(row, 'stop');
         },
+        permission: true,
         disabled: (row: any) => {
             return (
                 row.status !== 'Running' ||
@@ -358,6 +384,7 @@ const buttons = [
         click: (row: any) => {
             openOperate(row, 'delete');
         },
+        permission: true,
     },
     {
         label: i18n.global.t('app.params'),
@@ -429,11 +456,70 @@ const openTerminal = (row: any) => {
     dialogTerminalRef.value!.acceptParams({ containerID: row.container, title: title });
 };
 
+const enterSortMode = async () => {
+    sortMode.value = true;
+    clearInterval(Number(timer));
+    timer = null;
+    const res = await searchAppInstalled({ page: 1, pageSize: 10000, name: '', tags: [], update: false, sync: false });
+    data.value = res.data.items;
+    await nextTick();
+    const el = sortContainer.value?.$el;
+    if (el) {
+        const favCount = data.value.filter((i: any) => i.favorite).length;
+        sortableInstance = Sortable.create(el, {
+            animation: 150,
+            ghostClass: 'sortable-ghost',
+            onMove: (evt: any) => {
+                const from = evt.dragged.dataset.sortIndex;
+                const to = evt.related.dataset.sortIndex;
+                const fromFav = Number(from) < favCount;
+                const toFav = Number(to) < favCount;
+                return fromFav === toFav;
+            },
+            onEnd: (evt: any) => {
+                const el = evt.from;
+                el.removeChild(evt.item);
+                el.insertBefore(evt.item, el.children[evt.oldIndex] || null);
+
+                const list = [...data.value];
+                const [moved] = list.splice(evt.oldIndex, 1);
+                list.splice(evt.newIndex, 0, moved);
+                data.value = list;
+            },
+        });
+    }
+};
+
+const saveSortOrder = async () => {
+    if (!data.value) return;
+    let favIdx = 0;
+    let normalIdx = 0;
+    const items = data.value.map((item: any) => ({
+        installID: item.id,
+        sortOrder: item.favorite ? favIdx++ : normalIdx++,
+    }));
+    await updateAppInstallSort(items);
+    MsgSuccess(i18n.global.t('commons.msg.operationSuccess'));
+    exitSortMode();
+};
+
+const exitSortMode = () => {
+    if (sortableInstance) {
+        sortableInstance.destroy();
+        sortableInstance = null;
+    }
+    sortMode.value = false;
+    search();
+    timer = setInterval(() => {
+        search();
+    }, 1000 * 30);
+};
+
 const getConfig = async () => {
     try {
-        const res = await getAgentSettingByKey('SystemIP');
-        if (res.data != '') {
-            defaultLink.value = res.data;
+        const res = await getAgentSettingInfo();
+        if (res.data?.systemIP) {
+            defaultLink.value = res.data.systemIP;
             return;
         }
         if (!isMaster.value || currentNodeAddr.value != '127.0.0.1') {

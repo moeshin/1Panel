@@ -1,11 +1,12 @@
 package middleware
 
 import (
-	"github.com/1Panel-dev/1Panel/core/utils/common"
 	"strings"
 
 	"github.com/1Panel-dev/1Panel/core/app/api/v2/helper"
 	"github.com/1Panel-dev/1Panel/core/app/repo"
+	"github.com/1Panel-dev/1Panel/core/utils/common"
+	"github.com/1Panel-dev/1Panel/core/utils/security"
 	"github.com/gin-gonic/gin"
 )
 
@@ -24,17 +25,17 @@ func WhiteAllow() gin.HandlerFunc {
 		}
 
 		settingRepo := repo.NewISettingRepo()
-		status, err := settingRepo.Get(repo.WithByKey("AllowIPs"))
+		allowIPs, err := settingRepo.GetValueByKey("AllowIPs")
 		if err != nil {
 			helper.InternalServer(c, err)
 			return
 		}
 
-		if len(status.Value) == 0 {
+		if len(allowIPs) == 0 {
 			c.Next()
 			return
 		}
-		for _, ip := range strings.Split(status.Value, ",") {
+		for _, ip := range strings.Split(allowIPs, ",") {
 			if len(ip) == 0 {
 				continue
 			}
@@ -43,7 +44,7 @@ func WhiteAllow() gin.HandlerFunc {
 				return
 			}
 		}
-		code := LoadErrCode()
+		code := security.LoadErrCode()
 		helper.ErrWithHtml(c, code, "err_ip_limit")
 	}
 }

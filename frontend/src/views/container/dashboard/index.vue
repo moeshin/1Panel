@@ -107,6 +107,7 @@
                             <el-button
                                 v-if="countItem.imageReclaimable"
                                 class="-mt-0.5"
+                                v-permission
                                 @click="onClean('image', true)"
                                 link
                                 type="primary"
@@ -124,6 +125,7 @@
                             <el-button
                                 v-if="countItem.containerReclaimable"
                                 class="-mt-0.5"
+                                v-permission
                                 @click="onClean('container', false)"
                                 link
                                 type="primary"
@@ -141,6 +143,7 @@
                             <el-button
                                 v-if="countItem.volumeReclaimable"
                                 class="-mt-0.5"
+                                v-permission
                                 @click="onClean('volume', false)"
                                 link
                                 type="primary"
@@ -158,6 +161,7 @@
                             <el-button
                                 v-if="countItem.buildCacheUsage"
                                 class="-mt-0.5"
+                                v-permission
                                 @click="onClean('buildcache', false)"
                                 link
                                 type="primary"
@@ -196,8 +200,9 @@
 <script lang="ts" setup>
 import { containerItemStats, containerPrune, loadContainerStatus, loadDaemonJson } from '@/api/modules/container';
 import DockerStatus from '@/views/container/docker-status/index.vue';
-import { getSettingInfo } from '@/api/modules/setting';
-import { computeSize2, newUUID } from '@/utils/util';
+import { getAgentSettingInfo } from '@/api/modules/setting';
+import { computeSize2 } from '@/utils/size';
+import { newUUID } from '@/utils/id';
 import TaskLog from '@/components/log/task/index.vue';
 import { routerToName } from '@/utils/router';
 import { onMounted, reactive, ref } from 'vue';
@@ -290,7 +295,7 @@ const loadContainerSetting = async () => {
     const res = await loadDaemonJson();
     countItem.mirrors = res.data.registryMirrors || [];
 
-    const settingRes = await getSettingInfo();
+    const settingRes = await getAgentSettingInfo();
     countItem.sockPath = settingRes.data.dockerSockPath || 'unix:///var/run/docker.sock';
 };
 

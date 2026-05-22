@@ -32,6 +32,7 @@
                     <div class="mt-0.5">
                         <el-button
                             type="primary"
+                            v-permission
                             :disabled="dialogData.rowData.status === 'Pending'"
                             @click="onHandle(dialogData.rowData)"
                             link
@@ -42,6 +43,7 @@
                         <el-button
                             type="primary"
                             v-if="dialogData.rowData.status === 'Enable'"
+                            v-permission
                             @click="onChangeStatus(dialogData.rowData.id, 'disable')"
                             link
                         >
@@ -50,13 +52,14 @@
                         <el-button
                             type="primary"
                             v-if="dialogData.rowData.status === 'Disable'"
+                            v-permission
                             @click="onChangeStatus(dialogData.rowData.id, 'enable')"
                             link
                         >
                             {{ $t('commons.button.enable') }}
                         </el-button>
                         <el-divider direction="vertical" />
-                        <el-button :disabled="!hasRecords" type="primary" @click="onClean" link>
+                        <el-button v-permission :disabled="!hasRecords" type="primary" @click="onClean" link>
                             {{ $t('commons.button.clean') }}
                         </el-button>
                     </div>
@@ -252,7 +255,7 @@
 import { reactive, ref } from 'vue';
 import { Cronjob } from '@/api/interface/cronjob';
 import { searchRecords, handleOnce, updateStatus, cleanRecords, stopCronjob } from '@/api/modules/cronjob';
-import { dateFormat } from '@/utils/util';
+import { dateFormat } from '@/utils/date';
 import LogFile from '@/components/log/file/index.vue';
 import i18n from '@/lang';
 import { ElMessageBox } from 'element-plus';
@@ -287,7 +290,7 @@ const acceptParams = async (params: DialogProps): Promise<void> => {
     recordShow.value = true;
     dialogData.value = params;
     if (dialogData.value.rowData.type === 'database') {
-        const data = await listDbItems('mysql,mariadb,postgresql');
+        const data = await listDbItems('mysql,mariadb,mysql-cluster,postgresql,postgresql-cluster,mongodb');
         let itemDBs = data.data || [];
         for (const item of itemDBs) {
             if (item.id == dialogData.value.rowData.dbName) {

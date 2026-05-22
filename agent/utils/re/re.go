@@ -27,13 +27,27 @@ const (
 	DurationWithOptionalUnitPattern    = `^(\d+)([smhdw]?)$`
 	MysqlGroupPattern                  = `\[*\]`
 	AnsiEscapePattern                  = "\x1b\\[[0-9;?]*[A-Za-z]|\x1b=|\x1b>"
+	AnsiControlSeqPattern              = `\x1b\[[0-9;?]*[ -/]*[@-~]`
 	RecycleBinFilePattern              = `_1p_file_1p_(.+)_p_(\d+)_(\d+)`
+	OrderByValidationPattern           = `^[a-zA-Z_][a-zA-Z0-9_]*$`
+	SQLIdentifierPattern               = `^[A-Za-z_][A-Za-z0-9_]*$`
+	NginxHostPattern                   = `^[a-zA-Z0-9.-]+(:[0-9]+)?$`
+	NginxPathPattern                   = `^/[a-zA-Z0-9._/\-]*$`
+	SSHSyslogLinePattern               = `^([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})\s+\S+\s+(sshd(?:-session)?)(?:\[(\d+)\])?:\s+(.*)$`
+	SSHRFC3339LinePattern              = `^(\d{4}-\d{2}-\d{2}T\S+)\s+\S+\s+(sshd(?:-session)?)(?:\[(\d+)\])?:\s+(.*)$`
+	SSHDateTimeLinePattern             = `^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+\S+\s+(sshd(?:-session)?)(?:\[(\d+)\])?:\s+(.*)$`
+	SSHAcceptedPattern                 = `^Accepted (\S+) for (.+?) from ([0-9a-fA-F:.]+) port (\d+)`
+	SSHFailedPattern                   = `^Failed (\S+) for (?:(invalid user) )?(.+?) from ([0-9a-fA-F:.]+) port (\d+)`
+	SSHInvalidUserPattern              = `^Invalid user (.+?) from ([0-9a-fA-F:.]+)(?: port (\d+))?`
+	SSHClosedPattern                   = `^Connection closed by (?:(?:authenticating|invalid) user (.+?) )?([0-9a-fA-F:.]+) port (\d+)`
+	SSHDisconnectedPattern             = `^Disconnected from (?:(?:authenticating|invalid) user (.+?) )?([0-9a-fA-F:.]+) port (\d+)`
+	SSHDisconnectPattern               = `^Received disconnect from ([0-9a-fA-F:.]+) port (\d+)`
+	SSHMaxAuthPattern                  = `^error: maximum authentication attempts exceeded for (?:(?:invalid user) )?(.+?) from ([0-9a-fA-F:.]+) port (\d+)`
+	SSHNotAllowedPattern               = `^User (.+?) from ([0-9a-fA-F:.]+) not allowed`
 )
 
 var regexMap = make(map[string]*regexp.Regexp)
 
-// InitRegex compiles all regex patterns and stores them in the map.
-// This function should be called once at program startup.
 func Init() {
 	patterns := []string{
 		NumberAlphaPattern,
@@ -57,7 +71,23 @@ func Init() {
 		DurationWithOptionalUnitPattern,
 		MysqlGroupPattern,
 		AnsiEscapePattern,
+		AnsiControlSeqPattern,
 		RecycleBinFilePattern,
+		OrderByValidationPattern,
+		SQLIdentifierPattern,
+		NginxHostPattern,
+		NginxPathPattern,
+		SSHSyslogLinePattern,
+		SSHRFC3339LinePattern,
+		SSHDateTimeLinePattern,
+		SSHAcceptedPattern,
+		SSHFailedPattern,
+		SSHInvalidUserPattern,
+		SSHClosedPattern,
+		SSHDisconnectedPattern,
+		SSHDisconnectPattern,
+		SSHMaxAuthPattern,
+		SSHNotAllowedPattern,
 	}
 
 	for _, pattern := range patterns {
@@ -65,8 +95,6 @@ func Init() {
 	}
 }
 
-// GetRegex retrieves a compiled regex by its pattern string.
-// Panics if the pattern is not found in the map.
 func GetRegex(pattern string) *regexp.Regexp {
 	regex, exists := regexMap[pattern]
 	if !exists {
@@ -75,8 +103,10 @@ func GetRegex(pattern string) *regexp.Regexp {
 	return regex
 }
 
-// RegisterRegex registers a regex pattern and stores it in the map.
-// This function should be called once at program startup.
 func RegisterRegex(pattern string) {
 	regexMap[pattern] = regexp.MustCompile(pattern)
+}
+
+func StripAnsiControlSeq(value string) string {
+	return GetRegex(AnsiControlSeqPattern).ReplaceAllString(value, "")
 }

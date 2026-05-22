@@ -14,8 +14,8 @@ import (
 	"github.com/1Panel-dev/1Panel/core/constant"
 	"github.com/1Panel-dev/1Panel/core/global"
 	"github.com/1Panel-dev/1Panel/core/init/migration/helper"
-	"github.com/1Panel-dev/1Panel/core/utils/cmd"
 	"github.com/1Panel-dev/1Panel/core/utils/common"
+	"github.com/1Panel-dev/1Panel/core/utils/ctl_conf"
 	"github.com/1Panel-dev/1Panel/core/utils/encrypt"
 	"github.com/go-gormigrate/gormigrate/v2"
 	"gorm.io/gorm"
@@ -30,7 +30,6 @@ var AddTable = &gormigrate.Migration{
 			&model.Setting{},
 			&model.BackupAccount{},
 			&model.Group{},
-			&model.Host{},
 			&model.Command{},
 			&model.UpgradeLog{},
 			&model.ScriptLibrary{},
@@ -42,19 +41,21 @@ var InitSetting = &gormigrate.Migration{
 	ID: "20200908-add-table-setting",
 	Migrate: func(tx *gorm.DB) error {
 		encryptKey := common.RandStr(16)
-		if err := tx.Create(&model.Setting{Key: "UserName", Value: global.CONF.Base.Username}).Error; err != nil {
-			return err
-		}
 		global.CONF.Base.EncryptKey = encryptKey
-		pass, _ := encrypt.StringEncrypt(global.CONF.Base.Password)
 		language := "en"
 		if global.CONF.Base.Language == "zh" {
 			language = "zh"
 		}
-		if err := tx.Create(&model.Setting{Key: "Password", Value: pass}).Error; err != nil {
-			return err
+		if !global.CONF.Base.IsEnterprise {
+			if err := tx.Create(&model.Setting{Key: "UserName", Value: global.CONF.Base.Username}).Error; err != nil {
+				return err
+			}
+			pass, _ := encrypt.StringEncrypt(global.CONF.Base.Password)
+			if err := tx.Create(&model.Setting{Key: "Password", Value: pass}).Error; err != nil {
+				return err
+			}
 		}
-		_, _ = cmd.RunDefaultWithStdoutBashCf("%s sed -i -e 's#ORIGINAL_PASSWORD=.*#ORIGINAL_PASSWORD=**********#g' /usr/local/bin/1pctl", cmd.SudoHandleCmd())
+		_ = ctl_conf.UpdateInFile("/usr/local/bin/1pctl", "ORIGINAL_PASSWORD", "**********")
 		if err := tx.Create(&model.Setting{Key: "Theme", Value: "light"}).Error; err != nil {
 			return err
 		}
@@ -64,7 +65,13 @@ var InitSetting = &gormigrate.Migration{
 		if err := tx.Create(&model.Setting{Key: "PanelName", Value: "1Panel"}).Error; err != nil {
 			return err
 		}
+		if err := tx.Create(&model.Setting{Key: "Edition", Value: global.CONF.Base.Edition}).Error; err != nil {
+			return err
+		}
 		if err := tx.Create(&model.Setting{Key: "Language", Value: language}).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(&model.Setting{Key: "DocSource", Value: "withByRegion"}).Error; err != nil {
 			return err
 		}
 		if err := tx.Create(&model.Setting{Key: "SessionTimeout", Value: "86400"}).Error; err != nil {
@@ -139,6 +146,9 @@ var InitSetting = &gormigrate.Migration{
 		if err := tx.Create(&model.Setting{Key: "PasskeyCredentials", Value: ""}).Error; err != nil {
 			return err
 		}
+		if err := tx.Create(&model.Setting{Key: "PasskeyTrustedProxies", Value: "127.0.0.1\n::1"}).Error; err != nil {
+			return err
+		}
 		if err := tx.Create(&model.Setting{Key: "SystemVersion", Value: global.CONF.Base.Version}).Error; err != nil {
 			return err
 		}
@@ -185,6 +195,9 @@ var InitSetting = &gormigrate.Migration{
 		if err := tx.Create(&model.Setting{Key: "UninstallDeleteBackup", Value: constant.StatusDisable}).Error; err != nil {
 			return err
 		}
+		if err := tx.Create(&model.Setting{Key: "InstallAllowPort", Value: constant.StatusDisable}).Error; err != nil {
+			return err
+		}
 		return nil
 	},
 }
@@ -212,6 +225,23 @@ var AddPasskeySetting = &gormigrate.Migration{
 	},
 }
 
+var AddPasskeyTrustedProxySetting = &gormigrate.Migration{
+	ID: "20260210-add-passkey-trusted-proxy-setting",
+	Migrate: func(tx *gorm.DB) error {
+		var addSettingsIfMissing = func(tx *gorm.DB, key, value string) error {
+			var setting model.Setting
+			if err := tx.Where("key = ?", key).First(&setting).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return tx.Create(&model.Setting{Key: key, Value: value}).Error
+				}
+				return err
+			}
+			return nil
+		}
+		return addSettingsIfMissing(tx, "PasskeyTrustedProxies", "127.0.0.1\n::1")
+	},
+}
+
 var InitTerminalSetting = &gormigrate.Migration{
 	ID: "20240814-init-terminal-setting",
 	Migrate: func(tx *gorm.DB) error {
@@ -222,6 +252,15 @@ var InitTerminalSetting = &gormigrate.Migration{
 			return err
 		}
 		if err := tx.Create(&model.Setting{Key: "FontSize", Value: "12"}).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(&model.Setting{Key: "FontFamily", Value: "Monaco, Menlo, Consolas, 'Courier New', monospace"}).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(&model.Setting{Key: "BackgroundColor", Value: "#000000"}).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(&model.Setting{Key: "ForegroundColor", Value: "#f5f5f5"}).Error; err != nil {
 			return err
 		}
 		if err := tx.Create(&model.Setting{Key: "CursorBlink", Value: constant.StatusEnable}).Error; err != nil {
@@ -556,6 +595,20 @@ var AddDiskMenu = &gormigrate.Migration{
 	},
 }
 
+var AddAgentsMenu = &gormigrate.Migration{
+	ID: "20260204-add-agents-menu",
+	Migrate: func(tx *gorm.DB) error {
+		return helper.AddMenu(dto.ShowMenu{
+			ID:       "44",
+			Disabled: false,
+			Title:    "aiTools.agents.agent",
+			IsShow:   true,
+			Label:    "Agents",
+			Path:     "/ai/agents/agent",
+		}, "4", tx)
+	},
+}
+
 var AddSimpleNodeGroup = &gormigrate.Migration{
 	ID: "20250916-add-simple-node-group",
 	Migrate: func(tx *gorm.DB) error {
@@ -580,6 +633,29 @@ var AddScriptSync = &gormigrate.Migration{
 	ID: "20250916-add-script-sync",
 	Migrate: func(tx *gorm.DB) error {
 		if err := tx.Create(&model.Setting{Key: "ScriptSync", Value: constant.StatusEnable}).Error; err != nil {
+			return err
+		}
+		return nil
+	},
+}
+
+var AddDashboardCarouselSetting = &gormigrate.Migration{
+	ID: "20260210-add-dashboard-carousel-setting",
+	Migrate: func(tx *gorm.DB) error {
+		var addSettingsIfMissing = func(tx *gorm.DB, key, value string) error {
+			var setting model.Setting
+			if err := tx.Where("key = ?", key).First(&setting).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return tx.Create(&model.Setting{Key: key, Value: value}).Error
+				}
+				return err
+			}
+			return nil
+		}
+		if err := addSettingsIfMissing(tx, "DashboardMemoVisible", constant.StatusEnable); err != nil {
+			return err
+		}
+		if err := addSettingsIfMissing(tx, "DashboardSimpleNodeVisible", constant.StatusEnable); err != nil {
 			return err
 		}
 		return nil
@@ -671,5 +747,593 @@ var AdjustXpackNode = &gormigrate.Migration{
 		}
 
 		return tx.Model(&model.Setting{}).Where("key = ?", "HideMenu").Update("value", string(updatedJSON)).Error
+	},
+}
+
+var UpdateAiAgentsMenu = &gormigrate.Migration{
+	ID: "20260209-update-ai-agents-menu",
+	Migrate: func(tx *gorm.DB) error {
+		var menuJSON string
+		if err := tx.Model(&model.Setting{}).Where("key = ?", "HideMenu").Pluck("value", &menuJSON).Error; err != nil {
+			return err
+		}
+		if menuJSON == "" {
+			menuJSON = helper.LoadMenus()
+		}
+
+		var menus []dto.ShowMenu
+		if err := json.Unmarshal([]byte(menuJSON), &menus); err != nil {
+			return tx.Model(&model.Setting{}).
+				Where("key = ?", "HideMenu").
+				Update("value", helper.LoadMenus()).Error
+		}
+
+		foundAI := false
+		newItem := dto.ShowMenu{
+			ID:       "44",
+			Disabled: false,
+			Title:    "aiTools.agents.agent",
+			IsShow:   true,
+			Label:    "Agents",
+			Path:     "/ai/agents/agent",
+			Sort:     50,
+		}
+
+		for i := range menus {
+			if menus[i].Label != "AI-Menu" {
+				continue
+			}
+			foundAI = true
+			menus[i].IsShow = true
+
+			exists := false
+			for j := range menus[i].Children {
+				child := &menus[i].Children[j]
+				if child.Label == newItem.Label {
+					exists = true
+					child.IsShow = true
+					if child.Title == "" {
+						child.Title = newItem.Title
+					}
+					if child.Sort == 0 {
+						child.Sort = newItem.Sort
+					}
+					break
+				}
+			}
+
+			if !exists {
+				menus[i].Children = append([]dto.ShowMenu{newItem}, menus[i].Children...)
+			}
+			break
+		}
+
+		if !foundAI {
+			return tx.Model(&model.Setting{}).
+				Where("key = ?", "HideMenu").
+				Update("value", helper.LoadMenus()).Error
+		}
+
+		updatedJSON, err := json.Marshal(menus)
+		if err != nil {
+			return tx.Model(&model.Setting{}).
+				Where("key = ?", "HideMenu").
+				Update("value", helper.LoadMenus()).Error
+		}
+
+		return tx.Model(&model.Setting{}).Where("key = ?", "HideMenu").Update("value", string(updatedJSON)).Error
+	},
+}
+
+var AddEditionSetting = &gormigrate.Migration{
+	ID: "20260224-add-edition-setting",
+	Migrate: func(tx *gorm.DB) error {
+		var setting model.Setting
+		if err := tx.Where("key = ?", "Edition").First(&setting).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return tx.Create(&model.Setting{Key: "Edition", Value: global.CONF.Base.Edition}).Error
+			}
+			return err
+		}
+		if setting.Value == "" {
+			return tx.Model(&model.Setting{}).Where("key = ?", "Edition").Update("value", global.CONF.Base.Edition).Error
+		}
+		return nil
+	},
+}
+
+var AddDocSourceSetting = &gormigrate.Migration{
+	ID: "20260316-add-doc-source-setting",
+	Migrate: func(tx *gorm.DB) error {
+		var setting model.Setting
+		if err := tx.Where("key = ?", "DocSource").First(&setting).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return tx.Create(&model.Setting{Key: "DocSource", Value: "withByRegion"}).Error
+			}
+			return err
+		}
+		if setting.Value == "" {
+			return tx.Model(&model.Setting{}).Where("key = ?", "DocSource").Update("value", "withByRegion").Error
+		}
+		return nil
+	},
+}
+
+var AddAppStoreInstallAllowPortSetting = &gormigrate.Migration{
+	ID: "20260407-add-app-store-install-allow-port-setting",
+	Migrate: func(tx *gorm.DB) error {
+		var setting model.Setting
+		if err := tx.Where("key = ?", "InstallAllowPort").First(&setting).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return tx.Create(&model.Setting{Key: "InstallAllowPort", Value: constant.StatusDisable}).Error
+			}
+			return err
+		}
+		if setting.Value == "" {
+			return tx.Model(&model.Setting{}).Where("key = ?", "InstallAllowPort").Update("value", constant.StatusDisable).Error
+		}
+		return nil
+	},
+}
+
+var UpdateAiLocalModelMenuTitle = &gormigrate.Migration{
+	ID: "20260307-update-ai-local-model-menu-title",
+	Migrate: func(tx *gorm.DB) error {
+		return tx.Exec(
+			`UPDATE settings
+			 SET value = REPLACE(value, 'aiTools.model.model', 'aiTools.model.localModel')
+			 WHERE key = 'HideMenu'
+			   AND value LIKE '%aiTools.model.model%'`,
+		).Error
+	},
+}
+
+var UpdateAiAgentsHideMenuTitle = &gormigrate.Migration{
+	ID: "20260324-update-ai-agents-hide-menu-title",
+	Migrate: func(tx *gorm.DB) error {
+		return tx.Exec(
+			`UPDATE settings
+			 SET value = REPLACE(value, 'aiTools.agents.agents', 'aiTools.agents.agent')
+			 WHERE key = 'HideMenu'
+			   AND value LIKE '%aiTools.agents.agents%'`,
+		).Error
+	},
+}
+
+var UpdateAiModelMenuStructure = &gormigrate.Migration{
+	ID: "20260403-update-ai-model-menu-structure",
+	Migrate: func(tx *gorm.DB) error {
+		var menuJSON string
+		if err := tx.Model(&model.Setting{}).Where("key = ?", "HideMenu").Pluck("value", &menuJSON).Error; err != nil {
+			return err
+		}
+		if menuJSON == "" {
+			return tx.Model(&model.Setting{}).Where("key = ?", "HideMenu").Update("value", helper.LoadMenus()).Error
+		}
+
+		var menus []dto.ShowMenu
+		if err := json.Unmarshal([]byte(menuJSON), &menus); err != nil {
+			return tx.Model(&model.Setting{}).Where("key = ?", "HideMenu").Update("value", helper.LoadMenus()).Error
+		}
+
+		for i := range menus {
+			if menus[i].Label != "AI-Menu" {
+				continue
+			}
+			menus[i].Path = "/ai/model/account"
+			menus[i].Children = buildAiMenuChildren(menus[i].Children)
+			break
+		}
+
+		updatedJSON, err := json.Marshal(menus)
+		if err != nil {
+			return tx.Model(&model.Setting{}).Where("key = ?", "HideMenu").Update("value", helper.LoadMenus()).Error
+		}
+		return tx.Model(&model.Setting{}).Where("key = ?", "HideMenu").Update("value", string(updatedJSON)).Error
+	},
+}
+
+func buildAiMenuChildren(children []dto.ShowMenu) []dto.ShowMenu {
+	result := []dto.ShowMenu{
+		normalizeAiMenuChild(children, dto.ShowMenu{
+			ID:       "44",
+			Label:    "Agents",
+			Disabled: false,
+			IsShow:   true,
+			Title:    "aiTools.agents.agent",
+			Path:     "/ai/agents/agent",
+			Sort:     50,
+		}, "Agents"),
+		normalizeAiMenuChild(children, dto.ShowMenu{
+			ID:       "41",
+			Label:    "AIModel",
+			Disabled: false,
+			IsShow:   true,
+			Title:    "aiTools.model.model",
+			Path:     "/ai/model/account",
+			Sort:     100,
+		}, "AIModel", "OllamaModel"),
+	}
+
+	if global.CONF.Base.IsEnterprise {
+		result = append(result, normalizeAiMenuChild(children, dto.ShowMenu{
+			ID:       "46",
+			Label:    "AIProxyManagement",
+			Disabled: false,
+			IsShow:   true,
+			Title:    "aiTools.aiProxy.title",
+			Path:     "/ai/ai-proxy/model-pool",
+			Sort:     150,
+		}, "AIProxyManagement"))
+		result = append(result, normalizeAiMenuChild(children, dto.ShowMenu{
+			ID:       "47",
+			Label:    "SkillsHub",
+			Disabled: false,
+			IsShow:   true,
+			Title:    "aiTools.skillsHub.title",
+			Path:     "/ai/skills-hub",
+			Sort:     155,
+		}, "SkillsHub"))
+		result = append(result, normalizeAiMenuChild(children, dto.ShowMenu{
+			ID:       "45",
+			Label:    "AIBenchmark",
+			Disabled: false,
+			IsShow:   true,
+			Title:    "aiTools.benchmark.title",
+			Path:     "/ai/benchmark",
+			Sort:     160,
+		}, "AIBenchmark"))
+	}
+
+	result = append(result,
+		normalizeAiMenuChild(children, dto.ShowMenu{
+			ID:       "42",
+			Label:    "MCPServer",
+			Disabled: false,
+			IsShow:   true,
+			Title:    "menu.mcp",
+			Path:     "/ai/mcp",
+			Sort:     200,
+		}, "MCPServer"),
+		normalizeAiMenuChild(children, dto.ShowMenu{
+			ID:       "43",
+			Label:    "GPU",
+			Disabled: false,
+			IsShow:   true,
+			Title:    "aiTools.gpu.gpu",
+			Path:     "/ai/gpu",
+			Sort:     300,
+		}, "GPU"),
+	)
+	return result
+}
+
+func normalizeAiMenuChild(children []dto.ShowMenu, fallback dto.ShowMenu, labels ...string) dto.ShowMenu {
+	for _, child := range children {
+		for _, label := range labels {
+			if child.Label != label {
+				continue
+			}
+			child.ID = fallback.ID
+			child.Label = fallback.Label
+			child.Disabled = fallback.Disabled
+			child.Title = fallback.Title
+			child.Path = fallback.Path
+			child.Sort = fallback.Sort
+			child.Children = nil
+			return child
+		}
+	}
+	return fallback
+}
+
+var AddAIBenchmarkMenu = &gormigrate.Migration{
+	ID: "20260429-add-ai-benchmark-menu",
+	Migrate: func(tx *gorm.DB) error {
+		if !global.CONF.Base.IsEnterprise {
+			return nil
+		}
+		var menuJSON string
+		if err := tx.Model(&model.Setting{}).Where("key = ?", "HideMenu").Pluck("value", &menuJSON).Error; err != nil {
+			return err
+		}
+		if menuJSON == "" {
+			menuJSON = helper.LoadMenus()
+		}
+
+		var menus []dto.ShowMenu
+		if err := json.Unmarshal([]byte(menuJSON), &menus); err != nil {
+			return tx.Model(&model.Setting{}).
+				Where("key = ?", "HideMenu").
+				Update("value", helper.LoadMenus()).Error
+		}
+
+		newItem := dto.ShowMenu{
+			ID:       "45",
+			Disabled: false,
+			Title:    "aiTools.benchmark.title",
+			IsShow:   true,
+			Label:    "AIBenchmark",
+			Path:     "/ai/benchmark",
+			Sort:     160,
+		}
+
+		for i := range menus {
+			if menus[i].Label != "AI-Menu" {
+				continue
+			}
+			menus[i].Children = helper.UpsertMenuByLabel(menus[i].Children, newItem, "AIProxyManagement")
+			break
+		}
+
+		updatedJSON, err := json.Marshal(menus)
+		if err != nil {
+			return tx.Model(&model.Setting{}).
+				Where("key = ?", "HideMenu").
+				Update("value", helper.LoadMenus()).Error
+		}
+		return tx.Model(&model.Setting{}).Where("key = ?", "HideMenu").Update("value", string(updatedJSON)).Error
+	},
+}
+
+var AddAIProxyMenu = &gormigrate.Migration{
+	ID: "20260509-add-ai-proxy-menu",
+	Migrate: func(tx *gorm.DB) error {
+		if !global.CONF.Base.IsEnterprise {
+			return nil
+		}
+		var menuJSON string
+		if err := tx.Model(&model.Setting{}).Where("key = ?", "HideMenu").Pluck("value", &menuJSON).Error; err != nil {
+			return err
+		}
+		if menuJSON == "" {
+			menuJSON = helper.LoadMenus()
+		}
+
+		var menus []dto.ShowMenu
+		if err := json.Unmarshal([]byte(menuJSON), &menus); err != nil {
+			return tx.Model(&model.Setting{}).
+				Where("key = ?", "HideMenu").
+				Update("value", helper.LoadMenus()).Error
+		}
+
+		for i := range menus {
+			if menus[i].Label != "AI-Menu" {
+				continue
+			}
+			menus[i].Children = buildAiMenuChildren(menus[i].Children)
+			break
+		}
+
+		updatedJSON, err := json.Marshal(menus)
+		if err != nil {
+			return tx.Model(&model.Setting{}).
+				Where("key = ?", "HideMenu").
+				Update("value", helper.LoadMenus()).Error
+		}
+		return tx.Model(&model.Setting{}).Where("key = ?", "HideMenu").Update("value", string(updatedJSON)).Error
+	},
+}
+
+var AddSkillsHubMenu = &gormigrate.Migration{
+	ID: "20260517-add-skills-hub-menu",
+	Migrate: func(tx *gorm.DB) error {
+		if !global.CONF.Base.IsEnterprise {
+			return nil
+		}
+		var menuJSON string
+		if err := tx.Model(&model.Setting{}).Where("key = ?", "HideMenu").Pluck("value", &menuJSON).Error; err != nil {
+			return err
+		}
+		if menuJSON == "" {
+			menuJSON = helper.LoadMenus()
+		}
+
+		var menus []dto.ShowMenu
+		if err := json.Unmarshal([]byte(menuJSON), &menus); err != nil {
+			return tx.Model(&model.Setting{}).
+				Where("key = ?", "HideMenu").
+				Update("value", helper.LoadMenus()).Error
+		}
+
+		newItem := dto.ShowMenu{
+			ID:       "47",
+			Disabled: false,
+			Title:    "aiTools.skillsHub.title",
+			IsShow:   true,
+			Label:    "SkillsHub",
+			Path:     "/ai/skills-hub",
+			Sort:     155,
+		}
+		for i := range menus {
+			if menus[i].Label != "AI-Menu" {
+				continue
+			}
+			menus[i].Children = helper.UpsertMenuByLabel(menus[i].Children, newItem, "AIProxyManagement")
+			break
+		}
+
+		updatedJSON, err := json.Marshal(menus)
+		if err != nil {
+			return tx.Model(&model.Setting{}).
+				Where("key = ?", "HideMenu").
+				Update("value", helper.LoadMenus()).Error
+		}
+		return tx.Model(&model.Setting{}).Where("key = ?", "HideMenu").Update("value", string(updatedJSON)).Error
+	},
+}
+
+var AddUserManagementMenu = &gormigrate.Migration{
+	ID: "20260415-add-user-management-menu",
+	Migrate: func(tx *gorm.DB) error {
+		if !global.CONF.Base.IsEnterprise {
+			return nil
+		}
+		var menuJSON string
+		if err := tx.Model(&model.Setting{}).Where("key = ?", "HideMenu").Pluck("value", &menuJSON).Error; err != nil {
+			return err
+		}
+		if menuJSON == "" {
+			menuJSON = helper.LoadMenus()
+		}
+
+		var menus []dto.ShowMenu
+		if err := json.Unmarshal([]byte(menuJSON), &menus); err != nil {
+			return tx.Model(&model.Setting{}).
+				Where("key = ?", "HideMenu").
+				Update("value", helper.LoadMenus()).Error
+		}
+
+		newItem := dto.ShowMenu{
+			ID:       "121",
+			Disabled: false,
+			Title:    "xpack.user.userManage",
+			IsShow:   true,
+			Label:    "UserManagement",
+			Path:     "/enterprise/users",
+			Sort:     350,
+		}
+
+		for i := range menus {
+			if menus[i].Label != "Xpack-Menu" {
+				continue
+			}
+			menus[i].Children = helper.UpsertMenuByLabel(menus[i].Children, newItem, "NodeDashboard")
+			break
+		}
+
+		updatedJSON, err := json.Marshal(menus)
+		if err != nil {
+			return tx.Model(&model.Setting{}).
+				Where("key = ?", "HideMenu").
+				Update("value", helper.LoadMenus()).Error
+		}
+		return tx.Model(&model.Setting{}).Where("key = ?", "HideMenu").Update("value", string(updatedJSON)).Error
+	},
+}
+
+var AddOpsReportMenu = &gormigrate.Migration{
+	ID: "20260512-add-ops-report-menu",
+	Migrate: func(tx *gorm.DB) error {
+		if !global.CONF.Base.IsEnterprise {
+			return nil
+		}
+		var menuJSON string
+		if err := tx.Model(&model.Setting{}).Where("key = ?", "HideMenu").Pluck("value", &menuJSON).Error; err != nil {
+			return err
+		}
+		if menuJSON == "" {
+			menuJSON = helper.LoadMenus()
+		}
+
+		var menus []dto.ShowMenu
+		if err := json.Unmarshal([]byte(menuJSON), &menus); err != nil {
+			return tx.Model(&model.Setting{}).
+				Where("key = ?", "HideMenu").
+				Update("value", helper.LoadMenus()).Error
+		}
+
+		newItem := dto.ShowMenu{
+			ID:       "122",
+			Disabled: false,
+			Title:    "xpack.opsReport.name",
+			IsShow:   true,
+			Label:    "OpsReport",
+			Path:     "/enterprise/ops-report",
+			Sort:     360,
+		}
+
+		for i := range menus {
+			if menus[i].Label != "Xpack-Menu" {
+				continue
+			}
+			menus[i].Children = helper.UpsertMenuByLabel(menus[i].Children, newItem, "UserManagement")
+			break
+		}
+
+		updatedJSON, err := json.Marshal(menus)
+		if err != nil {
+			return tx.Model(&model.Setting{}).
+				Where("key = ?", "HideMenu").
+				Update("value", helper.LoadMenus()).Error
+		}
+		return tx.Model(&model.Setting{}).Where("key = ?", "HideMenu").Update("value", string(updatedJSON)).Error
+	},
+}
+
+var AddOpsReportSetting = &gormigrate.Migration{
+	ID: "20260512-add-ops-report-setting",
+	Migrate: func(tx *gorm.DB) error {
+		if !global.CONF.Base.IsEnterprise {
+			return nil
+		}
+		var count int64
+		if err := tx.Model(&model.Setting{}).Where("key = ?", "OpsReportExportFormat").Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			return nil
+		}
+		return tx.Create(&model.Setting{Key: "OpsReportExportFormat", Value: constant.OpsReportExportFormatPDF}).Error
+	},
+}
+
+var AddOpsReportScheduleSetting = &gormigrate.Migration{
+	ID: "20260513-add-ops-report-schedule-setting",
+	Migrate: func(tx *gorm.DB) error {
+		if !global.CONF.Base.IsEnterprise {
+			return nil
+		}
+		settings := []model.Setting{
+			{Key: "OpsReportSchedule", Value: constant.OpsReportScheduleWeekly},
+			{Key: "OpsReportSavePath", Value: path.Join(global.CONF.Base.InstallDir, constant.OpsReportDefaultSaveSubDir)},
+		}
+		for _, item := range settings {
+			var count int64
+			if err := tx.Model(&model.Setting{}).Where("key = ?", item.Key).Count(&count).Error; err != nil {
+				return err
+			}
+			if count > 0 {
+				continue
+			}
+			if err := tx.Create(&item).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	},
+}
+
+var AddOpsReportThresholdSetting = &gormigrate.Migration{
+	ID: "20260513-add-ops-report-threshold-setting",
+	Migrate: func(tx *gorm.DB) error {
+		if !global.CONF.Base.IsEnterprise {
+			return nil
+		}
+		var count int64
+		if err := tx.Model(&model.Setting{}).Where("key = ?", "OpsReportThreshold").Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			return nil
+		}
+		return tx.Create(&model.Setting{Key: "OpsReportThreshold", Value: constant.OpsReportDefaultThreshold}).Error
+	},
+}
+
+var AddOperationLogUser = &gormigrate.Migration{
+	ID: "20260424-add-operation-log-user",
+	Migrate: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.OperationLog{})
+	},
+}
+
+var AddIsOfflineSetting = &gormigrate.Migration{
+	ID: "20260429-add-is-offline-setting",
+	Migrate: func(tx *gorm.DB) error {
+		if err := tx.Create(&model.Setting{Key: "IsOffline", Value: constant.StatusDisable}).Error; err != nil {
+			return err
+		}
+		return nil
 	},
 }

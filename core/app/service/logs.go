@@ -1,16 +1,23 @@
 package service
 
 import (
+	"bytes"
+	"fmt"
+	"net/http"
+	"os"
+
 	"github.com/1Panel-dev/1Panel/core/buserr"
+	"github.com/1Panel-dev/1Panel/core/constant"
+	"github.com/1Panel-dev/1Panel/core/utils/cmd"
 	"github.com/1Panel-dev/1Panel/core/utils/common"
 	geo2 "github.com/1Panel-dev/1Panel/core/utils/geo"
+	"github.com/1Panel-dev/1Panel/core/utils/req_helper"
 	"github.com/gin-gonic/gin"
 
 	"github.com/1Panel-dev/1Panel/core/app/dto"
 	"github.com/1Panel-dev/1Panel/core/app/model"
 	"github.com/1Panel-dev/1Panel/core/app/repo"
 	"github.com/1Panel-dev/1Panel/core/global"
-	"github.com/1Panel-dev/1Panel/core/utils/cmd"
 	"github.com/jinzhu/copier"
 )
 
@@ -38,7 +45,7 @@ func (u *LogService) CreateLoginLog(operation model.LoginLog) error {
 
 func (u *LogService) PageLoginLog(ctx *gin.Context, req dto.SearchLgLogWithPage) (int64, interface{}, error) {
 	options := []global.DBOption{
-		repo.WithOrderBy("created_at desc"),
+		repo.WithOrderDesc("created_at"),
 	}
 	if len(req.IP) != 0 {
 		options = append(options, logRepo.WithByIP(req.IP))
@@ -72,7 +79,7 @@ func (u *LogService) CreateOperationLog(operation *model.OperationLog) error {
 
 func (u *LogService) PageOperationLog(req dto.SearchOpLogWithPage) (int64, interface{}, error) {
 	options := []global.DBOption{
-		repo.WithOrderBy("created_at desc"),
+		repo.WithOrderDesc("created_at"),
 		logRepo.WithByLikeOperation(req.Operation),
 	}
 	if len(req.Source) != 0 {
@@ -109,5 +116,21 @@ func (u *LogService) CleanLogs(logtype string) error {
 }
 
 func writeLogs(version string) {
-	_, _ = cmd.RunDefaultWithStdoutBashCf("curl -sfL %s | sh -s 1p upgrade %s", logs, version)
+	_ = runRemoteShellScript(logs, "1p", "upgrade", version)
+}
+
+func runRemoteShellScript(url string, args ...string) error {
+	statusCode, script, err := req_helper.HandleRequestWithProxy(url, http.MethodGet, constant.TimeOut20s)
+	if err != nil {
+		return err
+	}
+	if statusCode < http.StatusOK || statusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("download script failed, status code: %d", statusCode)
+	}
+	_, err = cmd.NewCommandMgr(cmd.WithOutputFile(os.DevNull)).RunPipe(cmd.PipeCommand{
+		Name:  "sh",
+		Args:  append([]string{"-s"}, args...),
+		Stdin: bytes.NewReader(script),
+	})
+	return err
 }

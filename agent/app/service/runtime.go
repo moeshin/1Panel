@@ -630,11 +630,14 @@ func (r *RuntimeService) OperateNodeModules(req request.NodeModuleOperateReq) er
 		return err
 	}
 	operation := getOperation(req.Operate, req.PkgManager)
-	execScript := fmt.Sprintf("%s %s %s", req.PkgManager, operation, req.Module)
+	execArgs := []string{"exec", "-i", containerName, req.PkgManager, operation}
+	if strings.TrimSpace(req.Module) != "" {
+		execArgs = append(execArgs, req.Module)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
-	installCmd := exec.CommandContext(ctx, "docker", "exec", "-i", containerName, "bash", "-c", execScript)
+	installCmd := exec.CommandContext(ctx, "docker", execArgs...)
 	output, err := installCmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to execute command: %s, error: %w", string(output), err)
@@ -677,7 +680,7 @@ func (r *RuntimeService) GetPHPExtensions(runtimeID uint) (response.PHPExtension
 		return res, err
 	}
 	cmdMgr := cmd.NewCommandMgr(cmd.WithTimeout(20 * time.Second))
-	out, err := cmdMgr.RunWithStdoutBashCf("docker exec -i %s php -m", runtime.ContainerName)
+	out, err := cmdMgr.RunWithStdout("docker", "exec", "-i", runtime.ContainerName, "php", "-m")
 	if err != nil {
 		return res, err
 	}
@@ -722,7 +725,7 @@ func (r *RuntimeService) InstallPHPExtension(req request.PHPExtensionInstallReq)
 	}
 	installTask.AddSubTask("", func(t *task.Task) error {
 		err = cmd.NewCommandMgr(cmd.WithTask(*installTask), cmd.WithTimeout(20*time.Minute)).
-			RunBashCf("docker exec -i %s install-ext %s", runtime.ContainerName, req.Name)
+			Run("docker", "exec", "-i", runtime.ContainerName, "install-ext", req.Name)
 		if err != nil {
 			return err
 		}
@@ -736,7 +739,7 @@ func (r *RuntimeService) InstallPHPExtension(req request.PHPExtensionInstallReq)
 			return err
 		}
 		err = cmd.NewCommandMgr(cmd.WithTask(*installTask), cmd.WithTimeout(15*time.Minute)).
-			RunBashCf("docker commit %s %s", runtime.ContainerName, runtime.Image)
+			Run("docker", "commit", runtime.ContainerName, runtime.Image)
 		if err != nil {
 			return err
 		}

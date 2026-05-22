@@ -11,11 +11,9 @@ func (s *ContainerRouter) InitRouter(Router *gin.RouterGroup) {
 	baRouter := Router.Group("containers")
 	baseApi := v2.ApiGroupApp.BaseApi
 	{
-		baRouter.GET("/exec", baseApi.ContainerWsSSH)
 		baRouter.GET("/stats/:id", baseApi.ContainerStats)
 
 		baRouter.POST("", baseApi.ContainerCreate)
-		baRouter.POST("command", baseApi.ContainerCreateByCommand)
 		baRouter.POST("/update", baseApi.ContainerUpdate)
 		baRouter.POST("/upgrade", baseApi.ContainerUpgrade)
 		baRouter.POST("/info", baseApi.ContainerInfo)
@@ -36,6 +34,12 @@ func (s *ContainerRouter) InitRouter(Router *gin.RouterGroup) {
 		baRouter.POST("/prune", baseApi.ContainerPrune)
 
 		baRouter.POST("/users", baseApi.LoadContainerUsers)
+		baRouter.POST("/files/search", baseApi.ListContainerFiles)
+		baRouter.POST("/files/upload", baseApi.UploadContainerFile)
+		baRouter.POST("/files/content", baseApi.GetContainerFileContent)
+		baRouter.POST("/files/size", baseApi.GetContainerFileSize)
+		baRouter.POST("/files/del", baseApi.DeleteContainerFile)
+		baRouter.POST("/files/download", baseApi.DownloadContainerFile)
 
 		baRouter.GET("/repo", baseApi.ListRepo)
 		baRouter.POST("/repo/status", baseApi.CheckRepoStatus)

@@ -34,6 +34,7 @@
             </div>
 
             <div
+                ref="paginationRef"
                 class="complex-table__pagination flex items-center w-full sm:flex-row flex-col text-xs sm:text-sm"
                 v-if="props.paginationConfig"
                 :class="{ '!justify-between': slots.paginationLeft, '!justify-end': !slots.paginationLeft }"
@@ -47,12 +48,9 @@
                         :page-sizes="[5, 10, 20, 50, 100, 200, 500]"
                         @size-change="sizeChange"
                         @current-change="currentChange"
-                        :size="mobile || paginationConfig.small ? 'small' : 'default'"
-                        :layout="
-                            mobile || paginationConfig.small
-                                ? 'total, prev, pager, next'
-                                : 'total, sizes, prev, pager, next, jumper'
-                        "
+                        :pager-count="responsivePagerCount"
+                        :size="isMobile || paginationConfig.small ? 'small' : 'default'"
+                        :layout="responsivePaginationLayout"
                     />
                 </slot>
             </div>
@@ -65,7 +63,7 @@
             @click.stop
         >
             <li
-                v-for="(btn, index) in rightButtons"
+                v-for="(btn, index) in visibleRightButtons"
                 :key="index"
                 :class="[{ disabled: disabled(btn) }, { divided: btn.divided }]"
                 @click="!disabled(btn) && rightButtonClick(btn)"
@@ -77,8 +75,10 @@
 </template>
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
-import { GlobalStore } from '@/store';
+import { useGlobalStore } from '@/composables/useGlobalStore';
 const slots = useSlots();
+
+const { isMobile, openMenuTabs } = useGlobalStore();
 
 defineOptions({ name: 'ComplexTable' });
 export interface DropdownProps {
@@ -107,14 +107,13 @@ const props = defineProps({
     },
 });
 const emit = defineEmits(['search', 'update:selects', 'update:paginationConfig']);
-const globalStore = GlobalStore();
-const mobile = computed(() => {
-    return globalStore.isMobile();
-});
 const tableRef = ref();
 const tableHeight = ref<number | string>('');
 const menuRef = ref<HTMLElement | null>(null);
+const paginationRef = ref<HTMLElement | null>(null);
 const leftSelect = ref(false);
+const paginationWidth = ref(0);
+let paginationResizeObserver: ResizeObserver | null = null;
 
 const rightClick = ref({
     visible: false,
@@ -122,9 +121,31 @@ const rightClick = ref({
     top: 0,
     currentRow: null,
 });
+const selectedRows = ref<any[]>([]);
 const handleRightClick = (row, column, event) => {
-    clearSelects();
-    tableRef.value.refElTable.toggleRowSelection(row);
+    if (!tableRef.value) return;
+
+    try {
+        const selectionColumn = tableRef.value.refElTable.columns.find((col) => col.type === 'selection');
+        const isSelectable = selectionColumn?.selectable ? selectionColumn.selectable(row) : true;
+        if (!isSelectable) {
+            if (!props.rightButtons) return;
+            event.preventDefault();
+            rightClick.value = {
+                visible: true,
+                left: event.clientX + 5,
+                top: event.clientY,
+                currentRow: row,
+            };
+            document.addEventListener('click', closeRightClick);
+            return;
+        }
+    } catch {}
+
+    if (!selectedRows.value.includes(row)) {
+        clearSelects();
+        tableRef.value.refElTable.toggleRowSelection(row);
+    }
     if (!props.rightButtons) {
         return;
     }
@@ -139,13 +160,26 @@ const handleRightClick = (row, column, event) => {
 };
 const closeRightClick = () => {
     rightClick.value.visible = false;
-    clearSelects();
     document.removeEventListener('click', closeRightClick);
 };
 const disabled = computed(() => {
     return function (btn: any) {
         return typeof btn.disabled === 'function' ? btn.disabled(rightClick.value.currentRow) : btn.disabled;
     };
+});
+const visibleRightButtons = computed(() => {
+    if (!props.rightButtons) {
+        return [];
+    }
+    return props.rightButtons.filter((btn: any) => {
+        if (typeof btn.show === 'function') {
+            return btn.show(rightClick.value.currentRow);
+        }
+        if (typeof btn.show === 'boolean') {
+            return btn.show;
+        }
+        return true;
+    });
 });
 function rightButtonClick(btn: any) {
     closeRightClick();
@@ -163,6 +197,7 @@ function sizeChange() {
 }
 
 function handleSelectionChange(row: any) {
+    selectedRows.value = row;
     emit('update:selects', row);
     if (row.length > 0) {
         leftSelect.value = true;
@@ -182,6 +217,27 @@ function clearSelects() {
 function clearSort() {
     tableRef.value.refElTable.clearSort();
 }
+
+const updatePaginationWidth = () => {
+    paginationWidth.value = paginationRef.value?.clientWidth || 0;
+};
+
+const responsivePaginationLayout = computed(() => {
+    if (isMobile.value || props.paginationConfig?.small) {
+        return 'total, prev, pager, next';
+    }
+    if (paginationWidth.value < 520) {
+        return 'total, prev, pager, next';
+    }
+    return 'total, sizes, prev, pager, next, jumper';
+});
+
+const responsivePagerCount = computed(() => {
+    if (isMobile.value || props.paginationConfig?.small || paginationWidth.value < 720) {
+        return 5;
+    }
+    return 7;
+});
 
 const adjustedX = ref(rightClick.value.left);
 const adjustedY = ref(rightClick.value.top);
@@ -244,7 +300,7 @@ defineExpose({
 
 function calcHeight() {
     let heightDiff = props.heightDiff ?? 320;
-    let tabHeight = globalStore.openMenuTabs ? 48 : 0;
+    let tabHeight = openMenuTabs.value ? 48 : 0;
 
     if (props.height) {
         tableHeight.value = props.height - tabHeight;
@@ -259,9 +315,16 @@ const toggleSelection = () => {
 
 onMounted(() => {
     calcHeight();
+    nextTick(() => {
+        updatePaginationWidth();
+        if (paginationRef.value) {
+            paginationResizeObserver = new ResizeObserver(updatePaginationWidth);
+            paginationResizeObserver.observe(paginationRef.value);
+        }
+    });
     window.addEventListener('resize', calcHeight);
     watch(
-        () => props.height,
+        () => [props.height, props.heightDiff],
         () => {
             calcHeight();
         },
@@ -270,6 +333,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
     window.removeEventListener('resize', calcHeight);
+    paginationResizeObserver?.disconnect();
+    paginationResizeObserver = null;
 });
 </script>
 
@@ -348,5 +413,15 @@ onBeforeUnmount(() => {
 .complex-table__pagination {
     flex: 1;
     @include flex-row(flex-end);
+
+    :deep(.el-pagination__sizes .el-select) {
+        width: 128px;
+        min-width: 128px;
+    }
+
+    :deep(.el-pagination--small .el-pagination__sizes .el-select) {
+        width: 100px;
+        min-width: 100px;
+    }
 }
 </style>

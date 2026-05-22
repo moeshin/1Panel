@@ -4,10 +4,10 @@
 <script lang="ts" setup>
 import { onMounted, nextTick, watch, onBeforeUnmount, ref } from 'vue';
 import echarts from '@/utils/echarts';
-import { GlobalStore } from '@/store';
-import { computeSizeFromKBs, computeSizeFromKB, computeSizeFromMB } from '@/utils/util';
+import { useGlobalStore } from '@/composables/useGlobalStore';
+import { computeSizeFromKBs, computeSizeFromKB, computeSizeFromMB } from '@/utils/size';
 import i18n from '@/lang';
-const globalStore = GlobalStore();
+const { themeConfig } = useGlobalStore();
 const isDarkTheme = ref(false);
 let mediaQuery: MediaQueryList;
 const props = defineProps({
@@ -99,10 +99,10 @@ const seriesStyle = [
 ];
 
 function initChart() {
-    if (globalStore.themeConfig.theme === 'auto') {
+    if (themeConfig.value.theme === 'auto') {
         isDarkTheme.value = window.matchMedia('(prefers-color-scheme: dark)').matches;
     } else {
-        isDarkTheme.value = globalStore.themeConfig.theme === 'dark';
+        isDarkTheme.value = themeConfig.value.theme === 'dark';
     }
     let itemChart = echarts?.getInstanceByDom(document.getElementById(props.id) as HTMLElement);
     const optionItem = itemChart?.getOption();
@@ -141,6 +141,7 @@ function initChart() {
         });
     }
 
+    const grid = props.option.grid || { left: '7%', right: '7%', bottom: '20%' };
     const option = {
         title: [
             {
@@ -205,9 +206,9 @@ function initChart() {
                 return res;
             },
         },
-        grid: props.option.grid || { left: '7%', right: '7%', bottom: '20%' },
+        grid,
         legend: itemSelect || {
-            right: 10,
+            right: grid.right || 10,
             itemWidth: 8,
             textStyle: {
                 color: '#646A73',
@@ -228,7 +229,14 @@ function initChart() {
                   },
               },
         series: series,
-        dataZoom: [{ startValue: props?.option.xData[0], show: props.dataZoom }],
+        dataZoom: [
+            {
+                ...(props.option.xData?.[0] ? { startValue: props.option.xData[0] } : {}),
+                left: grid.left,
+                right: grid.right,
+                show: props.dataZoom,
+            },
+        ],
     };
     // 渲染数据
     itemChart.setOption(option, true);

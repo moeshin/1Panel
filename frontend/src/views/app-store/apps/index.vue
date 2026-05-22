@@ -6,10 +6,16 @@
                 <Tags @change="changeTag" />
             </template>
             <template #leftToolBar>
-                <el-button @click="sync" type="primary" plain :disabled="syncing">
-                    <span>{{ syncCustomAppstore || isOffLine ? $t('app.syncCustomApp') : $t('app.syncAppList') }}</span>
+                <el-button v-permission @click="sync" type="primary" plain :disabled="syncing">
+                    <span>
+                        {{
+                            syncCustomAppstore || (isOffline && !isEnterprise)
+                                ? $t('app.syncCustomApp')
+                                : $t('app.syncAppList')
+                        }}
+                    </span>
                 </el-button>
-                <el-button @click="syncLocal" type="primary" plain :disabled="syncing" class="ml-2">
+                <el-button v-permission @click="syncLocal" type="primary" plain :disabled="syncing" class="ml-2">
                     {{ $t('app.syncLocalApp') }}
                 </el-button>
             </template>
@@ -55,7 +61,7 @@
                             v-bind="paginationConfig"
                             @change="search(req)"
                             :page-sizes="[30, 60, 90]"
-                            :layout="mobile ? 'total, prev, pager, next' : 'total, sizes, prev, pager, next, jumper'"
+                            :layout="isMobile ? 'total, prev, pager, next' : 'total, sizes, prev, pager, next, jumper'"
                         />
                     </div>
                 </div>
@@ -69,12 +75,12 @@
 
 <script lang="ts" setup>
 import { App } from '@/api/interface/app';
-import { onMounted, reactive, ref, computed } from 'vue';
+import { onMounted, reactive, ref } from 'vue';
 import { searchApp, syncApp, syncCutomAppStore, syncLocalApp, getCurrentNodeCustomAppConfig } from '@/api/modules/app';
 import Install from '../detail/install/index.vue';
 import router from '@/routers';
 import { MsgSuccess } from '@/utils/message';
-import { newUUID } from '@/utils/util';
+import { newUUID } from '@/utils/id';
 import Detail from '../detail/index.vue';
 import TaskLog from '@/components/log/task/index.vue';
 import bus from '@/global/bus';
@@ -85,11 +91,7 @@ import AppCard from '@/views/app-store/apps/app/index.vue';
 import MainDiv from '@/components/main-div/index.vue';
 import { jumpToInstall } from '@/utils/app';
 import { useGlobalStore } from '@/composables/useGlobalStore';
-const { globalStore, isProductPro, isOffLine } = useGlobalStore();
-
-const mobile = computed(() => {
-    return globalStore.isMobile();
-});
+const { isProductPro, isOffline, isMobile, isEnterprise } = useGlobalStore();
 
 const paginationConfig = reactive({
     cacheSizeKey: 'app-page-size',
@@ -180,7 +182,7 @@ const sync = async () => {
     };
     try {
         let res;
-        if (isOffLine.value || (isProductPro.value && syncCustomAppstore.value)) {
+        if ((isOffline.value && !isEnterprise.value) || (isProductPro.value && syncCustomAppstore.value)) {
             res = await syncCutomAppStore(syncReq);
         } else {
             res = await syncApp(syncReq);
@@ -246,7 +248,7 @@ onMounted(async () => {
             syncCustomAppstore.value = res.data.status === 'Enable';
         }
     }
-    if (isOffLine.value) {
+    if (isOffline.value) {
         syncCustomAppstore.value = true;
     }
     mainHeight.value = window.innerHeight - 380;

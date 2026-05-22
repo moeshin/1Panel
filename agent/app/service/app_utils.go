@@ -33,7 +33,6 @@ import (
 	"github.com/1Panel-dev/1Panel/agent/utils/common"
 	"github.com/1Panel-dev/1Panel/agent/utils/compose"
 	"github.com/1Panel-dev/1Panel/agent/utils/docker"
-	composeV2 "github.com/1Panel-dev/1Panel/agent/utils/docker"
 	"github.com/1Panel-dev/1Panel/agent/utils/env"
 	"github.com/1Panel-dev/1Panel/agent/utils/files"
 	"github.com/1Panel-dev/1Panel/agent/utils/nginx"
@@ -363,7 +362,7 @@ func deleteAppInstall(deleteReq request.AppInstallDelete) error {
 				if err != nil {
 					return err
 				}
-				images, err := composeV2.GetImagesFromDockerCompose(content, []byte(install.DockerCompose))
+				images, err := docker.GetImagesFromDockerCompose(content, []byte(install.DockerCompose))
 				if err != nil {
 					return err
 				}
@@ -391,6 +390,10 @@ func deleteAppInstall(deleteReq request.AppInstallDelete) error {
 		defer tx.Rollback()
 		if err = appInstallRepo.Delete(ctx, install); err != nil {
 			return err
+		}
+		appKey := install.App.Key
+		if isAgentAppKey(appKey) {
+			_ = agentRepo.DeleteByAppInstallIDWithCtx(ctx, install.ID)
 		}
 
 		resources, _ := appInstallResourceRepo.GetBy(appInstallResourceRepo.WithAppInstallId(install.ID))
@@ -422,6 +425,8 @@ func deleteAppInstall(deleteReq request.AppInstallDelete) error {
 		switch install.App.Key {
 		case constant.AppMysql, constant.AppMariaDB, constant.AppMysqlCluster:
 			_ = mysqlRepo.Delete(ctx, mysqlRepo.WithByMysqlName(install.Name))
+		case constant.AppMongodb:
+			_ = mongodbRepo.Delete(ctx, mongodbRepo.WithByMongodbName(install.Name))
 		case constant.AppPostgresql, constant.AppPostgresqlCluster:
 			_ = postgresqlRepo.Delete(ctx, postgresqlRepo.WithByPostgresqlName(install.Name))
 		}
@@ -660,7 +665,7 @@ func buildNginx(parentTask *task.Task) error {
 	logStr := fmt.Sprintf("%s %s", i18n.GetMsgByKey("TaskBuild"), i18n.GetMsgByKey("Image"))
 	parentTask.LogStart(logStr)
 	cmdMgr := cmd.NewCommandMgr(cmd.WithTask(*parentTask), cmd.WithTimeout(60*time.Minute))
-	if err = cmdMgr.RunBashCf("docker compose -f %s build", nginxInstall.GetComposePath()); err != nil {
+	if err = cmdMgr.Run("docker", "compose", "-f", nginxInstall.GetComposePath(), "build"); err != nil {
 		return err
 	}
 	parentTask.LogSuccess(logStr)
@@ -672,6 +677,7 @@ func upgradeInstall(req request.AppInstallUpgrade) error {
 	if err != nil {
 		return err
 	}
+	oldVersion := install.Version
 	detail, err := appDetailRepo.GetFirst(repo.WithByID(req.DetailID))
 	if err != nil {
 		return err
@@ -748,7 +754,7 @@ func upgradeInstall(req request.AppInstallUpgrade) error {
 			if req.DockerCompose != "" {
 				composeContent = []byte(req.DockerCompose)
 			}
-			images, err := composeV2.GetImagesFromDockerCompose(content, composeContent)
+			images, err := docker.GetImagesFromDockerCompose(content, composeContent)
 			if err != nil {
 				return err
 			}
@@ -762,8 +768,7 @@ func upgradeInstall(req request.AppInstallUpgrade) error {
 			}
 		}
 
-		command := exec.Command("/bin/bash", "-c", fmt.Sprintf("cp -rn %s/* %s || true", detailDir, install.GetPath()))
-		_, _ = command.CombinedOutput()
+		_ = copyAppDetailMissing(fileOp, detailDir, install.GetPath())
 		if install.App.Key == constant.AppOpenresty {
 			installBuildDir := path.Join(install.GetPath(), "build")
 			detailBuildDir := path.Join(detailDir, "build")
@@ -798,6 +803,9 @@ func upgradeInstall(req request.AppInstallUpgrade) error {
 		}
 
 		var newCompose string
+		if err = migrateOpenclawProtocolUpgrade(&install, oldVersion, detail.Version); err != nil {
+			return err
+		}
 		if req.DockerCompose == "" {
 			newCompose, err = getUpgradeCompose(install, detail)
 			if err != nil {
@@ -907,7 +915,7 @@ func getContainerNames(install model.AppInstall) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	project, err := composeV2.GetComposeProject(install.Name, install.GetPath(), []byte(install.DockerCompose), []byte(envStr), true)
+	project, err := docker.GetComposeProject(install.Name, install.GetPath(), []byte(install.DockerCompose), []byte(envStr), true)
 	if err != nil {
 		return nil, err
 	}
@@ -1025,7 +1033,7 @@ func downloadApp(app model.App, appDetail model.AppDetail, appInstall *model.App
 		}
 		return
 	}
-	if err = fileOp.Decompress(filePath, appResourceDir, files.SdkTarGz, ""); err != nil {
+	if err = fileOp.Decompress(context.Background(), filePath, appResourceDir, files.SdkTarGz, ""); err != nil {
 		if logger == nil {
 			global.LOG.Errorf("decompress app[%s] error %v", app.Name, err)
 		} else {
@@ -1120,7 +1128,7 @@ func runScript(task *task.Task, appInstall *model.AppInstall, operate string) er
 	task.LogStart(logStr)
 
 	cmdMgr := cmd.NewCommandMgr(cmd.WithTimeout(10*time.Minute), cmd.WithWorkDir(workDir))
-	if err := cmdMgr.RunBashC(scriptPath); err != nil {
+	if err := cmdMgr.Run("bash", scriptPath); err != nil {
 		task.LogFailedWithErr(logStr, err)
 		return err
 	}
@@ -1129,7 +1137,7 @@ func runScript(task *task.Task, appInstall *model.AppInstall, operate string) er
 }
 
 func checkContainerNameIsExist(containerName, appDir string) (bool, error) {
-	client, err := composeV2.NewDockerClient()
+	client, err := docker.NewDockerClient()
 	if err != nil {
 		return false, err
 	}
@@ -1165,11 +1173,11 @@ func upApp(task *task.Task, appInstall *model.AppInstall, pullImages bool) error
 			if err != nil {
 				return err
 			}
-			images, err := composeV2.GetImagesFromDockerCompose(envByte, []byte(appInstall.DockerCompose))
+			images, err := docker.GetImagesFromDockerCompose(envByte, []byte(appInstall.DockerCompose))
 			if err != nil {
 				return err
 			}
-			imagePrefix := xpack.GetImagePrefix()
+			imagePrefix := xpack.MultiNodeProvider.GetImagePrefix()
 			dockerCLi, err := docker.NewClient()
 			if err != nil {
 				return err
@@ -1609,6 +1617,7 @@ func handleInstalled(appInstallList []model.AppInstall, updated, sync, checkUpda
 				Document: installed.App.Document,
 			},
 			Favorite:    installed.Favorite,
+			SortOrder:   installed.SortOrder,
 			Container:   installed.ContainerName,
 			ServiceName: strings.ToLower(installed.ServiceName),
 		}
@@ -1768,7 +1777,7 @@ func addDockerComposeCommonParam(composeMap map[string]interface{}, serviceName 
 	if !serviceValid {
 		return buserr.New("ErrFileParse")
 	}
-	imagePreFix := xpack.GetImagePrefix()
+	imagePreFix := xpack.MultiNodeProvider.GetImagePrefix()
 	if imagePreFix != "" {
 		for _, service := range services {
 			serviceValue := service.(map[string]interface{})
@@ -1923,6 +1932,39 @@ func isHostModel(dockerCompose string) bool {
 		}
 	}
 	return false
+}
+
+func copyAppDetailMissing(fileOp files.FileOp, srcDir, dstDir string) error {
+	entries, err := os.ReadDir(srcDir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		srcPath := path.Join(srcDir, entry.Name())
+		dstPath := path.Join(dstDir, entry.Name())
+		if !fileOp.Stat(dstPath) {
+			if entry.IsDir() {
+				if err := fileOp.CopyDir(srcPath, dstDir); err != nil {
+					return err
+				}
+				continue
+			}
+			if err := fileOp.CopyFile(srcPath, dstDir); err != nil {
+				return err
+			}
+			continue
+		}
+		if !entry.IsDir() {
+			continue
+		}
+		if err := copyAppDetailMissing(fileOp, srcPath, dstPath); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func getRestartPolicy(yml string) string {
@@ -2150,15 +2192,21 @@ func handleSSLConfig(appInstall *model.AppInstall, hasDefaultWebsite bool, sslRe
 	return nil
 }
 
-func SyncTags(remoteProperties dto.ExtraProperties) error {
+func SyncTags(remoteProperties dto.ExtraProperties) (err error) {
 	tx, ctx := getTxAndContext()
-	defer tx.Rollback()
-	localTags, _ := tagRepo.All()
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		}
+	}()
+	localTags, err := tagRepo.All()
+	if err != nil {
+		return err
+	}
 	localTagsMap := make(map[string]*model.Tag)
 	for i := range localTags {
 		localTagsMap[localTags[i].Key] = &localTags[i]
 	}
-	var err error
 	remoteTagsMap := make(map[string]*dto.Tag)
 	for i := range remoteProperties.Tags {
 		remoteTagsMap[remoteProperties.Tags[i].Key] = &remoteProperties.Tags[i]
@@ -2166,7 +2214,9 @@ func SyncTags(remoteProperties dto.ExtraProperties) error {
 
 	for key, localTag := range localTagsMap {
 		if _, exists := remoteTagsMap[key]; !exists {
-			_ = tagRepo.DeleteByID(ctx, localTag.ID)
+			if err = tagRepo.DeleteByID(ctx, localTag.ID); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -2196,7 +2246,9 @@ func SyncTags(remoteProperties dto.ExtraProperties) error {
 		}
 	}
 
-	tx.Commit()
+	if err = tx.Commit().Error; err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -2228,10 +2280,39 @@ func isEditCompose(installed model.AppInstall) bool {
 	if rawCompose == "" || err != nil {
 		return false
 	}
-	if rawCompose != installed.DockerCompose {
-		return true
+	equal, err := composeEqualExceptImage(rawCompose, installed.DockerCompose)
+	if err != nil {
+		return false
 	}
-	return false
+	return !equal
+}
+
+func composeEqualExceptImage(expected, current string) (bool, error) {
+	expectedCompose := make(map[string]interface{})
+	if err := yaml.Unmarshal([]byte(expected), &expectedCompose); err != nil {
+		return false, err
+	}
+	currentCompose := make(map[string]interface{})
+	if err := yaml.Unmarshal([]byte(current), &currentCompose); err != nil {
+		return false, err
+	}
+	removeComposeServiceImages(expectedCompose)
+	removeComposeServiceImages(currentCompose)
+	return reflect.DeepEqual(expectedCompose, currentCompose), nil
+}
+
+func removeComposeServiceImages(composeMap map[string]interface{}) {
+	services, ok := composeMap["services"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	for _, service := range services {
+		serviceMap, ok := service.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		delete(serviceMap, "image")
+	}
 }
 
 func getAppVersions(key string, details []model.AppDetail) []string {

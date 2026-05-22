@@ -14,7 +14,7 @@
                     <el-tooltip :content="loadTooltip()" placement="top">
                         <el-button
                             @click="toggleFullscreen"
-                            v-if="!mobile"
+                            v-if="!isMobile"
                             class="!border-none !bg-transparent !text-base !font-semibold !py-2 !px-1 mr-2.5"
                             icon="FullScreen"
                         ></el-button>
@@ -32,7 +32,7 @@
                 <div class="flex justify-start items-center gap-x-4 card-action">
                     <el-text class="cursor-pointer" @click="handleReset">{{ $t('commons.button.reset') }}</el-text>
                     <el-divider direction="vertical" class="!mx-0" />
-                    <el-text class="cursor-pointer ml-0" @click="saveContent()">
+                    <el-text v-permission class="cursor-pointer ml-0" @click="saveContent()">
                         {{ $t('commons.button.save') }}
                     </el-text>
                     <el-divider direction="vertical" class="!mx-0" />
@@ -119,22 +119,22 @@
                                 </el-icon>
                                 <span class="sm:inline hidden pl-1">{{ $t('commons.button.refresh') }}</span>
                             </el-text>
-                            <el-divider direction="vertical" v-if="!mobile" class="!mx-0" />
-                            <el-dropdown @command="handleCreate" v-if="!mobile" trigger="click">
+                            <el-divider direction="vertical" v-if="!isMobile" class="!mx-0" />
+                            <el-dropdown @command="handleCreate" v-if="!isMobile" trigger="click">
                                 <el-text size="small">
                                     {{ $t('commons.button.create') }}
                                     <el-icon><arrow-down /></el-icon>
                                 </el-text>
                                 <template #dropdown>
                                     <el-dropdown-menu>
-                                        <el-dropdown-item command="dir" class="!px-2">
+                                        <fu-dropdown-item v-permission command="dir" class="!px-2">
                                             <svg-icon class="!w-5 !h-5" iconName="p-file-folder"></svg-icon>
                                             {{ $t('file.dir') }}
-                                        </el-dropdown-item>
-                                        <el-dropdown-item command="file" class="!px-2">
+                                        </fu-dropdown-item>
+                                        <fu-dropdown-item v-permission command="file" class="!px-2">
                                             <svg-icon class="!w-5 !h-5" iconName="p-file-normal"></svg-icon>
                                             {{ $t('menu.files') }}
-                                        </el-dropdown-item>
+                                        </fu-dropdown-item>
                                     </el-dropdown-menu>
                                 </template>
                             </el-dropdown>
@@ -187,7 +187,7 @@
                                 <span
                                     v-else
                                     style="display: inline-flex; align-items: center"
-                                    @click="getContent(data.path, data.extension)"
+                                    @click="getContent(data.path)"
                                 >
                                     <template v-if="isCreate == 'file' && data.id == 'new-file'">
                                         <div class="flex justify-between items-center gap-0.5 pr-2">
@@ -304,6 +304,11 @@
                         </template>
                     </el-dropdown>
                     <el-divider direction="vertical" class="!h-6" />
+                    <el-text class="cursor-pointer inline-flex items-center gap-1" @click="openHistoryDrawer">
+                        <span>{{ $t('file.history') }}</span>
+                        <span class="text-xs text-gray-500">({{ historyVersionCount }})</span>
+                    </el-text>
+                    <el-divider direction="vertical" class="!h-6" />
                     <el-dropdown trigger="click" max-height="300" placement="top" @command="changeLanguage">
                         <span class="el-dropdown-link">
                             {{
@@ -383,59 +388,99 @@
             </div>
         </template>
     </DialogPro>
+    <FileHistoryDrawer ref="historyDrawerRef" @restored="handleHistoryRestored" />
 </template>
 
 <script lang="ts" setup>
-import { createFile, getFileContent, getFilesTree, saveFileContent } from '@/api/modules/files';
+import {
+    batchCheckFiles,
+    createFile,
+    getFileContent,
+    getFilesTree,
+    saveFileContent,
+    searchFileHistory,
+} from '@/api/modules/files';
 import i18n from '@/lang';
 import { MsgError, MsgSuccess, MsgWarning } from '@/utils/message';
-import * as monaco from 'monaco-editor';
+import { loadMonacoLanguageSupport, setupMonacoEnvironment } from '@/utils/monaco';
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { Languages } from '@/global/mimetype';
-import jsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker';
-import cssWorker from 'monaco-editor/esm/vs/language/css/css.worker?worker';
-import htmlWorker from 'monaco-editor/esm/vs/language/html/html.worker?worker';
-import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker';
-import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
+import { resolveEditorLanguage } from '@/utils/file';
 
 import type { TabPaneName } from 'element-plus';
 import { ElMessageBox, ElTreeV2 } from 'element-plus';
 import { ResultData } from '@/api/interface';
 import { File } from '@/api/interface/file';
-import { getIcon, newUUID } from '@/utils/util';
-import { TreeKey, TreeNodeData } from 'element-plus/es/components/tree-v2/src/types';
+import { getIcon } from '@/utils/file';
+import { newUUID } from '@/utils/id';
+import { TreeNodeData } from 'element-plus/es/components/tree-v2/src/types';
 import { DArrowLeft, DArrowRight, Refresh, Top } from '@element-plus/icons-vue';
 import { loadBaseDir } from '@/api/modules/setting';
-import { GlobalStore } from '@/store';
 import CodeTabs from './tabs/index.vue';
+import FileHistoryDrawer from './history/index.vue';
 import noUpdateImage from '@/assets/images/no_update_app.svg';
+import { useGlobalStore } from '@/composables/useGlobalStore';
 
-let editor: monaco.editor.IStandaloneCodeEditor | undefined;
+const { isMobile } = useGlobalStore();
 
-self.MonacoEnvironment = {
-    getWorker(workerId, label) {
-        if (label === 'json') {
-            return new jsonWorker();
-        }
-        if (label === 'css' || label === 'scss' || label === 'less') {
-            return new cssWorker();
-        }
-        if (label === 'html' || label === 'handlebars' || label === 'razor') {
-            return new htmlWorker();
-        }
-        if (['typescript', 'javascript'].includes(label)) {
-            return new tsWorker();
-        }
-        return new EditorWorker();
-    },
+type MonacoEditorApi = typeof import('monaco-editor/esm/vs/editor/editor.api');
+
+let monacoApi: MonacoEditorApi | null = null;
+let monacoThemeInitialized = false;
+let editor: ReturnType<MonacoEditorApi['editor']['create']> | undefined;
+
+const eolLf = ref(0);
+const eolCrlf = ref(1);
+
+const ensureMonaco = async () => {
+    if (monacoApi) {
+        return monacoApi;
+    }
+
+    setupMonacoEnvironment();
+    const [monacoModule] = await Promise.all([
+        import('monaco-editor/esm/vs/editor/editor.api'),
+        loadMonacoLanguageSupport(),
+    ]);
+    monacoApi = monacoModule;
+    eolLf.value = monacoApi.editor.EndOfLineSequence.LF;
+    eolCrlf.value = monacoApi.editor.EndOfLineSequence.CRLF;
+
+    if (!monacoThemeInitialized) {
+        monacoApi.editor.defineTheme('vs', {
+            base: 'vs',
+            inherit: true,
+            rules: [{ token: '' }],
+            colors: {
+                'editor.background': '#f8f6f6',
+                'minimap.background': '#f4f4f4',
+                'scrollbar.shadow': '#e1e1e1',
+                'scrollbarSlider.background': '#e1e1e1',
+                'scrollbarSlider.hoverBackground': '#cccccc',
+                'scrollbarSlider.activeBackground': '#bfbfbf',
+            },
+        });
+        monacoThemeInitialized = true;
+    }
+
+    return monacoApi;
 };
 
+const disposeEditor = () => {
+    if (!editor) {
+        return;
+    }
+    clearPendingLineHighlight();
+    editor.dispose();
+    editor = undefined;
+};
 interface EditProps {
     language: string;
     content: string;
     path: string;
     name: string;
     extension: string;
+    initialLine?: number;
 }
 
 interface EditorConfig {
@@ -446,16 +491,48 @@ interface EditorConfig {
     minimap: boolean;
 }
 
-interface TreeNode {
-    key: TreeKey;
-    level: number;
-    parent?: TreeNode;
-    children?: File.FileTree[];
-    data: TreeNodeData;
-    disabled?: boolean;
-    name?: string;
-    isLeaf?: boolean;
-}
+const pendingInitialLine = ref(0);
+let lineHighlightDecorationIds: string[] = [];
+
+const clearPendingLineHighlight = () => {
+    if (!editor) {
+        lineHighlightDecorationIds = [];
+        return;
+    }
+    lineHighlightDecorationIds = editor.deltaDecorations(lineHighlightDecorationIds, []);
+};
+
+const revealPendingInitialLine = () => {
+    const line = pendingInitialLine.value;
+    if (!editor || !monacoApi || line < 1) {
+        return;
+    }
+    const model = editor.getModel();
+    if (!model) {
+        return;
+    }
+    const targetLine = Math.min(line, model.getLineCount());
+    editor.setSelection({
+        startLineNumber: targetLine,
+        startColumn: 1,
+        endLineNumber: targetLine,
+        endColumn: 1,
+    });
+    editor.setPosition({ lineNumber: targetLine, column: 1 });
+    editor.revealLineInCenter(targetLine);
+    lineHighlightDecorationIds = editor.deltaDecorations(lineHighlightDecorationIds, [
+        {
+            range: new monacoApi.Range(targetLine, 1, targetLine, model.getLineMaxColumn(targetLine)),
+            options: {
+                isWholeLine: true,
+                className: 'ai-search-target-line',
+                linesDecorationsClassName: 'ai-search-target-line-gutter',
+            },
+        },
+    ]);
+    editor.focus();
+    pendingInitialLine.value = 0;
+};
 
 const open = ref(false);
 const loading = ref(false);
@@ -478,7 +555,9 @@ const oldFileContent = ref('');
 const dialogHeader = ref(null);
 const dialogForm = ref(null);
 const dialogFooter = ref(null);
+const historyDrawerRef = ref();
 const currentPath = ref();
+const historyVersionCount = ref(0);
 const rowRefs = ref();
 const isCreate = ref('none');
 const newFolder = ref();
@@ -489,11 +568,6 @@ const toggleShow = () => {
     isShow.value = !isShow.value;
 };
 
-const globalStore = GlobalStore();
-const mobile = computed(() => {
-    return globalStore.isMobile();
-});
-
 type WordWrapOptions = 'off' | 'on' | 'wordWrapColumn' | 'bounded';
 
 const isFullscreen = ref(false);
@@ -501,27 +575,33 @@ const isFullscreen = ref(false);
 const config = reactive<EditorConfig>({
     theme: 'vs-dark',
     language: 'plaintext',
-    eol: monaco.editor.EndOfLineSequence.LF,
+    eol: eolLf.value,
     wordWrap: 'on',
     minimap: false,
 });
 
-monaco.editor.defineTheme('vs', {
-    base: 'vs',
-    inherit: true,
-    rules: [{ token: '' }],
-    colors: {
-        'editor.background': '#f8f6f6',
-        'minimap.background': '#f4f4f4',
-        'scrollbar.shadow': '#e1e1e1',
-        'scrollbarSlider.background': '#e1e1e1',
-        'scrollbarSlider.hoverBackground': '#cccccc',
-        'scrollbarSlider.activeBackground': '#bfbfbf',
-    },
-});
-
 const selectTab = ref();
 const fileTabs = ref([]);
+const maxTabs = 10;
+const codeTabsStorageKey = 'code-editor-tabs';
+
+const saveTabsToStorage = () => {
+    const simpleTabs = fileTabs.value.map((tab: any) => ({
+        path: tab.path,
+        name: tab.name,
+    }));
+    localStorage.setItem(codeTabsStorageKey, JSON.stringify(simpleTabs.slice(0, maxTabs)));
+};
+
+const loadTabsFromStorage = (): { path: string; name: string }[] => {
+    const raw = localStorage.getItem(codeTabsStorageKey);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+        return parsed.filter((item) => item && item.path && item.name);
+    }
+    return [];
+};
 const removeTab = (targetPath: TabPaneName) => {
     const tabs = fileTabs.value;
     let activeName = selectTab.value;
@@ -536,6 +616,11 @@ const removeTab = (targetPath: TabPaneName) => {
         }
         selectTab.value = activeName;
         fileTabs.value = tabs.filter((tab) => tab.path !== targetPath);
+        saveTabsToStorage();
+        if (fileTabs.value.length === 0) {
+            selectTab.value = '';
+            disposeEditor();
+        }
     };
 
     if (isEdit.value) {
@@ -547,19 +632,23 @@ const removeTab = (targetPath: TabPaneName) => {
         })
             .then(() => {
                 updateTabs();
-                saveContent();
-                getContent(selectTab.value, '');
+                if (fileTabs.value.length > 0) {
+                    saveContent();
+                    getContent(selectTab.value);
+                }
             })
             .catch(() => {
                 updateTabs();
                 isEdit.value = false;
                 if (fileTabs.value.length > 0) {
-                    getContent(selectTab.value, '');
+                    getContent(selectTab.value);
                 }
             });
     } else {
         updateTabs();
-        getContent(selectTab.value, '');
+        if (fileTabs.value.length > 0) {
+            getContent(selectTab.value);
+        }
     }
 };
 
@@ -581,12 +670,13 @@ const removeAllTab = (targetPath: string, type: 'left' | 'right' | 'all') => {
         const newTabs = type === 'all' ? [] : filterTabs();
         fileTabs.value = newTabs;
         selectTab.value = activeName;
+        saveTabsToStorage();
 
         if (type === 'all') {
             selectTab.value = '';
-            editor.dispose();
+            disposeEditor();
         } else if (newTabs.length > 0) {
-            getContent(activeName, '');
+            getContent(activeName);
         }
     };
 
@@ -615,8 +705,6 @@ const removeAllTab = (targetPath: string, type: 'left' | 'right' | 'all') => {
             .catch(onCancel);
     } else {
         updateTabs();
-        if (type === 'all') editor.dispose();
-        else getContent(activeName, '');
     }
 };
 
@@ -628,7 +716,8 @@ const removeOtherTab = (targetPath: string) => {
     const updateTabs = () => {
         fileTabs.value = [targetTab];
         selectTab.value = targetTab.path;
-        getContent(targetTab.path, '');
+        saveTabsToStorage();
+        getContent(targetTab.path);
     };
 
     const onConfirm = () => {
@@ -658,19 +747,19 @@ const removeOtherTab = (targetPath: string) => {
 
 const changeTab = (targetPath: TabPaneName) => {
     selectTab.value = targetPath.toString();
-    getContent(targetPath.toString(), '');
+    getContent(targetPath.toString());
 };
 
-const eols = [
+const eols = computed(() => [
     {
         label: 'LF (Linux)',
-        value: monaco.editor.EndOfLineSequence.LF,
+        value: eolLf.value,
     },
     {
         label: 'CRLF (Windows)',
-        value: monaco.editor.EndOfLineSequence.CRLF,
+        value: eolCrlf.value,
     },
-];
+]);
 
 const themes = [
     {
@@ -701,7 +790,7 @@ const handleClose = () => {
         fileTabs.value = [];
         isEdit.value = false;
         if (editor) {
-            editor.dispose();
+            disposeEditor();
         }
         em('close', open.value);
     };
@@ -771,13 +860,23 @@ const toggleFullscreen = () => {
 };
 
 const changeLanguage = (command: string) => {
+    if (!editor || !monacoApi) {
+        return;
+    }
     config.language = command;
-    monaco.editor.setModelLanguage(editor.getModel(), config.language);
+    const model = editor.getModel();
+    if (!model) {
+        return;
+    }
+    monacoApi.editor.setModelLanguage(model, config.language);
 };
 
 const changeTheme = (command: string) => {
+    if (!monacoApi) {
+        return;
+    }
     config.theme = command;
-    monaco.editor.setTheme(config.theme);
+    monacoApi.editor.setTheme(config.theme);
     const themes = {
         vs: 'monaco-editor-tree-light',
         'vs-dark': 'monaco-editor-tree-dark',
@@ -797,8 +896,11 @@ const changeTheme = (command: string) => {
 };
 
 const changeEOL = (command: number) => {
+    if (!editor) {
+        return;
+    }
     config.eol = command;
-    editor.getModel().pushEOL(config.eol);
+    editor.getModel()?.pushEOL(config.eol);
 };
 
 const changeWarp = (command: string) => {
@@ -819,46 +921,87 @@ const changeMinimap = (command: boolean) => {
     });
 };
 
-const initEditor = () => {
-    if (editor) {
-        editor.dispose();
-    }
-    nextTick(() => {
-        editor = monaco.editor.create(codeBox.value as HTMLElement, {
-            theme: config.theme,
-            value: form.value.content,
-            readOnly: false,
-            automaticLayout: true,
-            language: config.language,
-            folding: true,
-            roundedSelection: false,
-            overviewRulerBorder: false,
-            wordWrap: config.wordWrap,
-            minimap: {
-                enabled: config.minimap,
-            },
-            lineNumbersMinChars: 6,
-        });
-        if (editor.getModel().getValue() === '') {
-            let defaultContent = '';
-            editor.getModel().setValue(defaultContent);
-        }
+const initEditor = async () => {
+    const monaco = await ensureMonaco();
 
-        editor.getModel().pushEOL(config.eol);
+    disposeEditor();
+    await nextTick();
 
-        editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, quickSave);
-
-        editor.onDidChangeModelContent(() => {
-            if (editor) {
-                form.value.content = editor.getValue();
-                isEdit.value = true;
-            }
-        });
+    editor = monaco.editor.create(codeBox.value as HTMLElement, {
+        theme: config.theme,
+        value: form.value.content,
+        readOnly: false,
+        automaticLayout: true,
+        language: config.language,
+        folding: true,
+        roundedSelection: false,
+        overviewRulerBorder: false,
+        wordWrap: config.wordWrap,
+        minimap: {
+            enabled: config.minimap,
+        },
+        lineNumbersMinChars: 6,
     });
+    if (editor.getModel()?.getValue() === '') {
+        editor.getModel()?.setValue('');
+    }
+
+    editor.getModel()?.pushEOL(config.eol);
+
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, quickSave);
+
+    editor.onDidChangeModelContent(() => {
+        if (editor) {
+            form.value.content = editor.getValue();
+            isEdit.value = true;
+        }
+    });
+
+    revealPendingInitialLine();
 };
 
 const quickSave = () => {
     saveContent();
+};
+
+const openHistoryDrawer = () => {
+    if (!form.value.path) {
+        MsgWarning(i18n.global.t('file.historyNeedFile'));
+        return;
+    }
+    if (!historyDrawerRef.value) {
+        return;
+    }
+    historyDrawerRef.value.acceptParams({
+        path: form.value.path,
+        content: form.value.content,
+        language: config.language,
+        extension: fileExtension.value,
+        dirty: isEdit.value,
+    });
+};
+
+const loadHistoryVersionCount = async (path: string) => {
+    if (!path) {
+        historyVersionCount.value = 0;
+        return;
+    }
+
+    try {
+        const res = await searchFileHistory({
+            page: 1,
+            pageSize: 1,
+            path,
+            scope: 'current',
+        });
+        if (form.value.path === path) {
+            historyVersionCount.value = res.data?.total || 0;
+        }
+    } catch {
+        if (form.value.path === path) {
+            historyVersionCount.value = 0;
+        }
+    }
 };
 
 const saveContent = async () => {
@@ -869,6 +1012,7 @@ const saveContent = async () => {
             if (res) {
                 isEdit.value = false;
                 oldFileContent.value = form.value.content;
+                await loadHistoryVersionCount(form.value.path);
                 MsgSuccess(i18n.global.t('commons.msg.updateSuccess'));
             } else {
                 MsgError(i18n.global.t('commons.status.failed'));
@@ -882,27 +1026,59 @@ const saveContent = async () => {
     }
 };
 
-const acceptParams = (props: EditProps) => {
+const acceptParams = async (props: EditProps) => {
+    const monaco = await ensureMonaco();
+
+    pendingInitialLine.value = props.initialLine && props.initialLine > 0 ? Math.floor(props.initialLine) : 0;
     form.value.content = props.content;
     oldFileContent.value = props.content;
     form.value.path = props.path;
+    historyVersionCount.value = 0;
     currentPath.value = getDirectoryPath(props.path);
     directoryPath.value = getDirectoryPath(props.path);
     fileExtension.value = props.extension;
     fileName.value = props.name;
-    fileTabs.value = [];
-    selectTab.value = '';
-    fileTabs.value.push({
-        name: fileName.value,
-        path: props.path,
-    });
+    config.language = resolveEditorLanguage(props.path, props.extension, props.name);
+
+    let savedTabs = loadTabsFromStorage();
+    const withoutCurrent = savedTabs.filter((tab) => tab.path !== props.path);
+    if (withoutCurrent.length > 0) {
+        try {
+            const existRes = await batchCheckFiles(withoutCurrent.map((t) => t.path));
+            const existList = existRes?.data ?? [];
+            const existingPaths = new Set(existList.map((r) => r.path));
+            savedTabs = withoutCurrent.filter((t) => existingPaths.has(t.path));
+        } catch {
+            savedTabs = withoutCurrent;
+        }
+    } else {
+        savedTabs = [];
+    }
+    const merged = [...savedTabs, { path: props.path, name: props.name }];
+    fileTabs.value = merged.slice(-maxTabs);
     selectTab.value = props.path;
-    config.language = props.language;
+
+    if (props.language) {
+        config.language = props.language;
+    }
     config.eol = monaco.editor.EndOfLineSequence.LF;
     config.theme = localStorage.getItem(codeThemeKey) || 'vs-dark';
     config.wordWrap = (localStorage.getItem(warpKey) as WordWrapOptions) || 'on';
     config.minimap = localStorage.getItem(minimapKey) !== null ? localStorage.getItem(minimapKey) === 'true' : true;
     open.value = true;
+    saveTabsToStorage();
+    loadHistoryVersionCount(props.path);
+    nextTick(() => {
+        if (editor) {
+            editor.setValue(form.value.content);
+            const model = editor.getModel();
+            if (model) {
+                monacoApi?.editor.setModelLanguage(model, config.language);
+            }
+            isEdit.value = false;
+            revealPendingInitialLine();
+        }
+    });
 };
 
 const getIconName = (extension: string) => getIcon(extension);
@@ -930,8 +1106,8 @@ const getDirectoryPath = (filePath: string) => {
     return directoryPath;
 };
 
-const onOpen = () => {
-    initEditor();
+const onOpen = async () => {
+    await initEditor();
     changeTheme(config.theme);
     search(directoryPath.value).then((res) => {
         handleSearchResult(res);
@@ -965,22 +1141,17 @@ const getRefresh = (path: string) => {
     }
 };
 
-const getContent = (path: string, extension: string) => {
-    if (form.value.path === path || isCreate.value == 'file') {
+const getContent = (path: string, forceReload = false) => {
+    if (!forceReload && (form.value.path === path || isCreate.value == 'file')) {
         return;
+    }
+    const existsInTabs = fileTabs.value.some((tab) => tab.path === path);
+    if (!existsInTabs && fileTabs.value.length >= maxTabs) {
+        fileTabs.value.shift();
     }
     const fetchFileContent = () => {
         codeReq.path = path;
         codeReq.expand = true;
-
-        if (extension !== '') {
-            Languages.forEach((language) => {
-                const ext = extension.substring(1);
-                if (language.value.indexOf(ext) > -1) {
-                    config.language = language.label;
-                }
-            });
-        }
 
         getFileContent(codeReq)
             .then((res) => {
@@ -989,23 +1160,21 @@ const getContent = (path: string, extension: string) => {
                 form.value.path = res.data.path;
                 fileExtension.value = res.data.extension;
                 fileName.value = res.data.name;
+                config.language = resolveEditorLanguage(res.data.path, res.data.extension, res.data.name);
                 initEditor();
-                if (extension == '') {
-                    Languages.forEach((language) => {
-                        const ext = fileExtension.value.substring(1);
-                        if (language.value.indexOf(ext) > -1) {
-                            config.language = language.label;
-                        }
-                    });
-                }
                 const exists = fileTabs.value.some((tab) => tab.path === path);
-                if (!exists) {
+                if (exists) {
+                    const tab = fileTabs.value.find((t) => t.path === path);
+                    if (tab) tab.name = res.data.name;
+                } else {
                     fileTabs.value.push({
                         name: res.data.name,
-                        path: path,
+                        path: res.data.path,
                     });
                 }
+                saveTabsToStorage();
                 selectTab.value = res.data.path;
+                loadHistoryVersionCount(res.data.path);
             })
             .catch(() => {});
     };
@@ -1026,6 +1195,13 @@ const getContent = (path: string, extension: string) => {
             .finally(() => {});
     } else {
         fetchFileContent();
+    }
+};
+
+const handleHistoryRestored = (path: string) => {
+    if (path === form.value.path) {
+        getContent(path, true);
+        loadHistoryVersionCount(path);
     }
 };
 
@@ -1085,7 +1261,7 @@ const treeProps = {
     children: 'children',
 };
 
-const handleNodeCollapse = (data: TreeNodeData, node: TreeNode) => {
+const handleNodeCollapse = (data: TreeNodeData, node: any) => {
     isCreate.value = 'none';
     expandedNodeIds.value.delete(data.id);
 
@@ -1104,7 +1280,7 @@ const handleNodeCollapse = (data: TreeNodeData, node: TreeNode) => {
     }
 };
 
-const handleNodeExpand = async (data: TreeNodeData, node: TreeNode) => {
+const handleNodeExpand = (data: TreeNodeData, node: any) => {
     if (node.data.id == 'new-dir' || node.data.id == 'new-file') {
         return;
     }
@@ -1116,18 +1292,19 @@ const handleNodeExpand = async (data: TreeNodeData, node: TreeNode) => {
         selectedParentNode.value = node;
         expandedNodeIds.value.add(node.data.id);
     }
-    try {
-        const response = await search(data.path);
-        const newTreeData = JSON.parse(JSON.stringify(treeData.value));
-        if (response.data.length > 0 && response.data[0].children) {
-            node.children = response.data[0].children;
-            loadedNodes.value.add(node.data.path);
-            updateNodeChildren(newTreeData, node.data.path, response.data[0].children);
-        } else {
-            node.children = [];
-        }
-        treeData.value = newTreeData;
-    } catch (error) {}
+    search(data.path)
+        .then((response) => {
+            const newTreeData = JSON.parse(JSON.stringify(treeData.value));
+            if (response.data.length > 0 && response.data[0].children) {
+                node.children = response.data[0].children;
+                loadedNodes.value.add(node.data.path);
+                updateNodeChildren(newTreeData, node.data.path, response.data[0].children);
+            } else {
+                node.children = [];
+            }
+            treeData.value = newTreeData;
+        })
+        .catch(() => {});
 };
 
 const updateNodeChildren = (nodes: any[], path: any, newChildren: File.FileTree[]) => {
@@ -1235,7 +1412,7 @@ const createFolder = async (isDir: boolean) => {
     const editingNode = currentEditingNode.value;
     if (!editingNode) return;
     if (addForm.path.indexOf('.1panel_clash') > -1) {
-        MsgWarning(i18n.global.t('file.clashDitNotSupport'));
+        MsgWarning(i18n.global.t('file.clashDidNotSupport'));
         return;
     }
     addForm.isDir = isDir;
@@ -1376,5 +1553,13 @@ defineExpose({ acceptParams });
 
 :deep(.el-input__inner:focus) {
     outline: none !important;
+}
+
+:deep(.monaco-editor .ai-search-target-line) {
+    background-color: rgba(64, 158, 255, 0.14);
+}
+
+:deep(.monaco-editor .ai-search-target-line-gutter) {
+    border-left: 3px solid var(--el-color-primary);
 }
 </style>

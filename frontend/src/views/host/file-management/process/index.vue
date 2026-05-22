@@ -10,7 +10,7 @@
                 >
                     <div class="flex items-center gap-3">
                         <div class="flex-1">
-                            <MsgInfo :info="value.name" class="text-gray-700" />
+                            <MsgInfo :info="value.name" width="300" class="text-gray-700" />
                             <div class="text-gray-500">
                                 {{ value.percent === 100 ? $t('file.downloadSuccess') : $t('file.downloading') }}
                             </div>
@@ -18,9 +18,22 @@
                     </div>
 
                     <div class="space-y-2">
-                        <div class="flex justify-end text-gray-500 mb-1">
-                            <span>{{ getFileSize(value.written) }}</span>
-                            <span v-if="value.total > 0" class="text-gray-400">/{{ getFileSize(value.total) }}</span>
+                        <div class="flex justify-between items-center mb-1 text-gray-500">
+                            <div>
+                                <span>{{ getFileSize(value.written) }}</span>
+                                <span v-if="value.total > 0" class="text-gray-400">
+                                    /{{ getFileSize(value.total) }}
+                                </span>
+                            </div>
+                            <el-button
+                                v-if="value.percent !== 100"
+                                link
+                                type="danger"
+                                size="small"
+                                @click="onStop(index)"
+                            >
+                                {{ $t('commons.button.stop') }}
+                            </el-button>
                         </div>
                         <div class="w-full">
                             <el-progress
@@ -48,14 +61,20 @@
 </template>
 
 <script lang="ts" setup>
-import { fileWgetKeys } from '@/api/modules/files';
-import { computeSize } from '@/utils/util';
+import { fileWgetKeys, stopWgetFile } from '@/api/modules/files';
+import { computeSize } from '@/utils/size';
 import { onBeforeUnmount, ref } from 'vue';
 import MsgInfo from '@/components/msg-info/index.vue';
-import { GlobalStore } from '@/store';
-const globalStore = GlobalStore();
+import { useGlobalStore } from '@/composables/useGlobalStore';
+import { ElMessageBox } from 'element-plus';
+import { MsgError, MsgSuccess } from '@/utils/message';
+import i18n from '@/lang';
+import { checkStreamAuth } from '@/utils/stream-auth';
+const { currentNode: globalCurrentNode } = useGlobalStore();
 
-let processSocket = ref(null) as unknown as WebSocket;
+let processSocket: WebSocket | null = null;
+let sendTimer: ReturnType<typeof setInterval> | null = null;
+let initProcessToken = 0;
 const res = ref([]);
 const keys = ref(['']);
 const open = ref(false);
@@ -65,17 +84,24 @@ const em = defineEmits(['close']);
 const handleClose = () => {
     closeSocket();
     open.value = false;
-    em('close', open);
+    em('close', open.value);
 };
 
 const isWsOpen = () => {
-    const readyState = processSocket && processSocket.readyState;
-    return readyState === 1;
+    return processSocket?.readyState === WebSocket.OPEN;
+};
+const clearSendTimer = () => {
+    if (sendTimer) {
+        clearInterval(sendTimer);
+        sendTimer = null;
+    }
 };
 const closeSocket = () => {
+    clearSendTimer();
     if (isWsOpen()) {
-        processSocket && processSocket.close();
+        processSocket.close();
     }
+    processSocket = null;
 };
 
 const onOpenProcess = () => {};
@@ -85,12 +111,23 @@ const onMessage = (message: any) => {
 const onerror = () => {};
 const onClose = () => {};
 
-const initProcess = () => {
+const initProcess = async () => {
+    const token = ++initProcessToken;
     let href = window.location.href;
     let protocol = href.split('//')[0] === 'http:' ? 'ws' : 'wss';
     let ipLocal = href.split('//')[1].split('/')[0];
-    let currentNode = globalStore.currentNode;
-    processSocket = new WebSocket(`${protocol}://${ipLocal}/api/v2/files/wget/process?operateNode=${currentNode}`);
+    let currentNode = globalCurrentNode.value;
+    const url = `${protocol}://${ipLocal}/api/v2/files/wget/process?operateNode=${currentNode}`;
+    const authError = await checkStreamAuth(url, currentNode);
+    if (token !== initProcessToken || !open.value) {
+        return;
+    }
+    if (authError) {
+        MsgError(authError);
+        return;
+    }
+    closeSocket();
+    processSocket = new WebSocket(url);
     processSocket.onopen = onOpenProcess;
     processSocket.onmessage = onMessage;
     processSocket.onerror = onerror;
@@ -115,9 +152,10 @@ const getKeys = async () => {
 };
 
 const sendMsg = () => {
-    setInterval(() => {
+    clearSendTimer();
+    sendTimer = setInterval(() => {
         if (isWsOpen()) {
-            processSocket.send(
+            processSocket?.send(
                 JSON.stringify({
                     type: 'wget',
                     keys: keys.value,
@@ -131,7 +169,31 @@ const getFileSize = (size: number) => {
     return computeSize(size);
 };
 
+const onStop = async (index: number) => {
+    const key = keys.value[index];
+    if (!key) return;
+    try {
+        await ElMessageBox.confirm(i18n.global.t('file.stopWgetConfirm'), i18n.global.t('commons.button.tip'), {
+            type: 'warning',
+            confirmButtonText: i18n.global.t('commons.button.confirm'),
+            cancelButtonText: i18n.global.t('commons.button.cancel'),
+        });
+    } catch {
+        return;
+    }
+    try {
+        await stopWgetFile(key);
+        MsgSuccess(i18n.global.t('commons.msg.operationSuccess'));
+        keys.value = keys.value.filter((_, i) => i !== index);
+        res.value = res.value.filter((_, i) => i !== index);
+        if (keys.value.length === 0 || res.value.length === 0) {
+            handleClose();
+        }
+    } catch (e) {}
+};
+
 onBeforeUnmount(() => {
+    initProcessToken++;
     closeSocket();
 });
 
@@ -143,7 +205,7 @@ const acceptParams = () => {
 defineExpose({ acceptParams });
 </script>
 
-<style type="scss" scoped>
+<style lang="scss" scoped>
 .download-item.completed {
     @apply bg-green-50/50;
 }

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/1Panel-dev/1Panel/core/constant"
 	"github.com/1Panel-dev/1Panel/core/i18n"
@@ -17,12 +18,15 @@ func init() {
 
 	RootCmd.AddCommand(resetCmd)
 	resetCmd.AddCommand(resetMFACmd)
+	resetMFACmd.Flags().StringVar(&resetMFAUserNameFlag, "username", "", "username")
 	resetCmd.AddCommand(resetSSLCmd)
 	resetCmd.AddCommand(resetEntranceCmd)
 	resetCmd.AddCommand(resetBindIpsCmd)
 	resetCmd.AddCommand(resetDomainCmd)
 	resetCmd.AddCommand(resetPasskeyCmd)
 }
+
+var resetMFAUserNameFlag string
 
 var resetCmd = &cobra.Command{
 	Use: "reset",
@@ -39,6 +43,29 @@ var resetMFACmd = &cobra.Command{
 		i18n.UseI18nForCmd(language)
 		if !isRoot() {
 			fmt.Println(i18n.GetMsgWithMapForCmd("SudoHelper", map[string]interface{}{"cmd": "sudo 1pctl reset mfa"}))
+			return nil
+		}
+		if isEnterprise() && len(strings.TrimSpace(resetMFAUserNameFlag)) == 0 {
+			fmt.Println(i18n.GetMsgByKeyForCmd("UsernameNeed"))
+			return nil
+		}
+		if isEnterprise() {
+			db, err := loadDBConn("enterprise.db")
+			if err != nil {
+				return err
+			}
+			username := strings.TrimSpace(resetMFAUserNameFlag)
+			var count int64
+			if err := db.Table("users").Where("name = ?", username).Count(&count).Error; err != nil {
+				return err
+			}
+			if count == 0 {
+				return fmt.Errorf("%s: %s", i18n.GetMsgByKeyForCmd("ErrRecordNotFound"), strings.TrimSpace(resetMFAUserNameFlag))
+			}
+			result := db.Exec("UPDATE users SET mfa_status = ? WHERE name = ?", constant.StatusDisable, username)
+			if result.Error != nil {
+				return result.Error
+			}
 			return nil
 		}
 		db, err := loadDBConn("core.db")
@@ -62,7 +89,10 @@ var resetSSLCmd = &cobra.Command{
 			return err
 		}
 
-		return setSettingByKey(db, "SSL", constant.StatusDisable)
+		if err := setSettingByKey(db, "SSL", constant.StatusDisable); err != nil {
+			return err
+		}
+		return nil
 	},
 }
 var resetEntranceCmd = &cobra.Command{
@@ -94,7 +124,10 @@ var resetBindIpsCmd = &cobra.Command{
 			return err
 		}
 
-		return setSettingByKey(db, "AllowIPs", "")
+		if err := setSettingByKey(db, "AllowIPs", ""); err != nil {
+			return err
+		}
+		return nil
 	},
 }
 var resetDomainCmd = &cobra.Command{
@@ -110,7 +143,10 @@ var resetDomainCmd = &cobra.Command{
 			return err
 		}
 
-		return setSettingByKey(db, "BindDomain", "")
+		if err := setSettingByKey(db, "BindDomain", ""); err != nil {
+			return err
+		}
+		return nil
 	},
 }
 

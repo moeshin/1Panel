@@ -23,32 +23,32 @@
                 <SubItem :menuList="routerMenus" :level="0" />
             </el-menu>
         </el-scrollbar>
-        <Collapse :version="version" @open-task="openTask" />
+        <Collapse :version="version" @open-task="openTask" @refresh="search" />
     </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import { RouteRecordRaw, useRoute } from 'vue-router';
 import { loadingSvg } from '@/utils/svg';
 import Logo from './components/Logo.vue';
 import Collapse from './components/Collapse.vue';
 import SubItem from './components/SubItem.vue';
 import { menuList } from '@/routers/router';
-import { GlobalStore, MenuStore } from '@/store';
-import { isString } from '@vueuse/core';
-import { getSettingInfo } from '@/api/modules/setting';
+import { MenuStore } from '@/store';
+import { getSettingBaseInfo } from '@/api/modules/setting';
 import PrimaryMenu from '@/assets/images/menu-bg.svg?component';
-import { sortMenu } from '@/utils/util';
+import { hasPermissionMetaAccess, hasRouteRoleAccess } from '@/utils/rbac';
+import { useGlobalStore } from '@/composables/useGlobalStore';
 
 const route = useRoute();
 const menuStore = MenuStore();
-const globalStore = GlobalStore();
+const { currentNode, isAdmin, isEE, isIntl, permissions } = useGlobalStore();
 const version = ref();
 
 const activeMenu = computed(() => {
     const { meta, path } = route;
-    return isString(meta.activeMenu) ? meta.activeMenu : path;
+    return typeof meta.activeMenu === 'string' ? meta.activeMenu : path;
 });
 const isCollapse = computed((): boolean => menuStore.isCollapse);
 
@@ -72,13 +72,13 @@ const handleMenuClick = (path) => {
     emit('menuClick', path);
 };
 
-function getCheckedLabels(menu: any, showMap: any) {
+function getCheckedLabels(menu: any, showSet: Set<string>) {
     for (const item of menu) {
         if (item.isShow) {
-            showMap[item.label] = true;
+            showSet.add(item.label);
         }
         if (item.children) {
-            getCheckedLabels(item.children, showMap);
+            getCheckedLabels(item.children, showSet);
         }
     }
 }
@@ -88,75 +88,142 @@ const openTask = () => {
 };
 
 const search = async () => {
-    const res = await getSettingInfo();
-    version.value = res.data.systemVersion;
-    let hideMenu = JSON.parse(res.data.hideMenu);
-    sortMenu(hideMenu);
-    const showMap = new Map();
-    getCheckedLabels(hideMenu, showMap);
-    const rootMap = new Map();
-    hideMenu.forEach((m, index) => {
-        rootMap.set(m.label, index);
-    });
-    let rstMenuList: RouteRecordRaw[] = [];
-    let resMenuList: RouteRecordRaw[] = [];
-    resMenuList = adjustAndCleanMenu(hideMenu, menuStore.menuList);
-    for (const menu of resMenuList) {
-        let menuItem = JSON.parse(JSON.stringify(menu));
-        if (!showMap[menuItem.name]) {
-            continue;
-        } else if (menuItem.name === 'Xpack-Menu') {
-            menuItem.meta.hideInSidebar = false;
-        }
-        const childMenu = hideMenu.find((item) => item.label == menu.name);
-        const childMap = buildIndexMap(childMenu?.children || []);
-        const itemChildren =
-            (menuItem.children ?? [])
-                .filter(
-                    (item) =>
-                        item.name &&
-                        showMap[item.name as string] &&
-                        !(item.name === 'XAlertDashboard' && globalStore.isIntl),
-                )
-                .sort(sortByMap(childMap)) || [];
-
-        if (itemChildren.length === 1) {
-            menuItem.meta.icon = itemChildren[0].meta.icon;
-            menuItem.meta.title = itemChildren[0].meta.title;
-        }
-        menuItem.children = itemChildren;
-        rstMenuList.push(menuItem);
+    let settingInfo: { systemVersion: string; hideMenu?: string } | null = null;
+    try {
+        const res = await getSettingBaseInfo();
+        settingInfo = res.data;
+        version.value = res.data.systemVersion;
+    } catch (error) {
+        version.value = '';
     }
-    rstMenuList.sort((a, b) => {
-        const labelA = a.name;
-        const labelB = b.name;
-        const indexA = rootMap.get(labelA) ?? Infinity;
-        const indexB = rootMap.get(labelB) ?? Infinity;
-        return indexA - indexB;
-    });
-    menuStore.menuList = rstMenuList;
+
+    if (!settingInfo?.hideMenu) {
+        setFallbackMenuListIfEmpty();
+        return;
+    }
+
+    try {
+        const rstMenuList = buildMenuListFromSettings(settingInfo.hideMenu);
+        if (!isSameMenuList(menuStore.menuList as RouteRecordRaw[], rstMenuList)) {
+            menuStore.setMenuList(rstMenuList);
+        }
+    } catch (error) {
+        setFallbackMenuListIfEmpty();
+    }
 };
 
-function buildIndexMap(list: any[]): Map<string, number> {
-    const map = new Map<string, number>();
-    list.forEach((m, i) => map.set(m.label, i));
-    return map;
+function isSameMenuList(source: RouteRecordRaw[], target: RouteRecordRaw[]) {
+    return JSON.stringify(source) === JSON.stringify(target);
 }
 
-function sortByMap(map: Map<string, number>) {
-    return (a: { name: string }, b: { name: string }) => {
-        const indexA = map.get(a.name) ?? Infinity;
-        const indexB = map.get(b.name) ?? Infinity;
-        return indexA - indexB;
-    };
+function setFallbackMenuListIfEmpty() {
+    if (!menuStore.menuList || menuStore.menuList.length === 0) {
+        menuStore.setMenuList(buildAuthVisibleMenuList(menuList));
+    }
+}
+
+function allowMenuItem(item: RouteRecordRaw) {
+    if (isAdmin.value) {
+        return true;
+    }
+    if (!hasRouteRoleAccess(item.meta)) {
+        return false;
+    }
+    return hasPermissionMetaAccess(item.meta?.permission as string | string[] | undefined);
+}
+
+function buildMenuListFromSettings(hideMenuValue?: string) {
+    const hideMenu = JSON.parse(hideMenuValue || '[]');
+    const showSet = new Set<string>();
+    getCheckedLabels(hideMenu, showSet);
+    const rstMenuList: RouteRecordRaw[] = [];
+    const resMenuList = adjustAndCleanMenu(hideMenu, menuList);
+    for (const menu of resMenuList) {
+        const menuItem = buildVisibleMenu(menu, showSet);
+        if (menuItem) {
+            rstMenuList.push(menuItem);
+        }
+    }
+    return rstMenuList;
+}
+
+function buildAuthVisibleMenuList(source: RouteRecordRaw[]) {
+    return source
+        .map((item) => {
+            if (!allowMenuItem(item)) {
+                return null;
+            }
+            const menuItem = JSON.parse(JSON.stringify(item));
+            const children = Array.isArray(menuItem.children) ? menuItem.children : [];
+            if (children.length === 0) {
+                return menuItem;
+            }
+            menuItem.children = buildAuthVisibleMenuList(children).filter(Boolean);
+            if (menuItem.children.length === 0) {
+                return null;
+            }
+            if (menuItem.children.length === 1) {
+                const onlyChild = menuItem.children[0];
+                if (onlyChild.meta?.icon) {
+                    menuItem.meta.icon = onlyChild.meta.icon;
+                }
+                if (onlyChild.meta?.title) {
+                    menuItem.meta.title = onlyChild.meta.title;
+                }
+            }
+            if (menuItem.name === 'Xpack-Menu') {
+                menuItem.meta.hideInSidebar = false;
+            }
+            return menuItem;
+        })
+        .filter(Boolean) as RouteRecordRaw[];
+}
+
+function buildVisibleMenu(menu: RouteRecordRaw, showSet: Set<string>): RouteRecordRaw | null {
+    const menuItem = JSON.parse(JSON.stringify(menu));
+    if (!menuItem?.name || !showSet.has(menuItem.name as string)) {
+        return null;
+    }
+    if (!allowMenuItem(menuItem)) {
+        return null;
+    }
+
+    const children = Array.isArray(menuItem.children) ? menuItem.children : [];
+    if (children.length === 0) {
+        return menuItem;
+    }
+
+    const visibleChildren = children
+        .map((item) => {
+            if ((item.name === 'Upage' || item.name === 'XApp') && (isIntl.value || isEE.value)) {
+                return null;
+            }
+            return buildVisibleMenu(item, showSet);
+        })
+        .filter(Boolean) as RouteRecordRaw[];
+
+    menuItem.children = visibleChildren;
+    if (menuItem.children.length === 0) {
+        return null;
+    }
+
+    if (menuItem.children.length === 1) {
+        const onlyChild = menuItem.children[0];
+        if (onlyChild.meta?.icon) {
+            menuItem.meta.icon = onlyChild.meta.icon;
+        }
+        if (onlyChild.meta?.title) {
+            menuItem.meta.title = onlyChild.meta.title;
+        }
+    }
+    if (menuItem.name === 'Xpack-Menu') {
+        menuItem.meta.hideInSidebar = false;
+    }
+    return menuItem;
 }
 
 function adjustAndCleanMenu(menuItem, list) {
     const menuList = JSON.parse(JSON.stringify(list));
-    const orderMap = new Map();
-    menuItem.forEach((item, index) => {
-        orderMap.set(item.label, index);
-    });
     const itemMap = new Map();
     for (const parent of menuList) {
         itemMap.set(parent.name, parent);
@@ -177,15 +244,7 @@ function adjustAndCleanMenu(menuItem, list) {
             if (!matched) continue;
 
             if (Array.isArray(ref.children) && ref.children.length > 0) {
-                const childMap = buildIndexMap(ref.children || []);
                 matched.children = buildTree(ref.children);
-                matched.children.sort((a, b) => {
-                    const labelA = a.name;
-                    const labelB = b.name;
-                    const indexA = childMap.get(labelA) ?? Infinity;
-                    const indexB = childMap.get(labelB) ?? Infinity;
-                    return indexA - indexB;
-                });
             } else {
                 delete matched.children;
             }
@@ -197,15 +256,15 @@ function adjustAndCleanMenu(menuItem, list) {
     }
 
     const newMenu = buildTree(menuItem);
-    newMenu.sort((a, b) => {
-        const indexA = orderMap.get(a.name) ?? Infinity;
-        const indexB = orderMap.get(b.name) ?? Infinity;
-        return indexA - indexB;
-    });
     for (const menu of newMenu) {
         if (menu.children?.length === 1) {
-            menu.meta.icon = menu.children[0].meta.icon;
-            menu.meta.title = menu.children[0].meta.title;
+            const onlyChild = menu.children[0];
+            if (onlyChild.meta?.icon) {
+                menu.meta.icon = onlyChild.meta.icon;
+            }
+            if (onlyChild.meta?.title) {
+                menu.meta.title = onlyChild.meta.title;
+            }
         }
     }
 
@@ -213,19 +272,28 @@ function adjustAndCleanMenu(menuItem, list) {
 }
 
 onMounted(() => {
-    menuStore.setMenuList(menuList);
+    if (!menuStore.menuList || menuStore.menuList.length === 0) {
+        menuStore.setMenuList(isAdmin.value ? menuList : buildAuthVisibleMenuList(menuList));
+    }
     search();
 });
+
+watch(
+    () => [currentNode.value, permissions.value.join('|')],
+    () => {
+        search();
+    },
+);
 </script>
 
-<style lang="scss">
+<style lang="scss" scoped>
 @use 'index';
 
 .background {
     z-index: 20;
 }
 
-.custom-menu .el-menu-item {
+.custom-menu :deep(.el-menu-item) {
     white-space: normal !important;
     word-break: break-word;
     overflow-wrap: break-word;

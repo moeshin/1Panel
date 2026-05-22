@@ -1,7 +1,7 @@
 <template>
     <LayoutContent
         back-name="CronjobItem"
-        :title="isCreate ? $t('cronjob.create') : $t('commons.button.edit') + ' - ' + form.name"
+        :title="isCreate ? $t('commons.button.create') : $t('commons.button.edit') + ' - ' + form.name"
     >
         <template #main>
             <el-form ref="formRef" label-position="top" :model="form" :rules="rules">
@@ -308,6 +308,7 @@
                                             <el-option label="Mariadb" value="mariadb" />
                                             <el-option label="PostgreSQL" value="postgresql" />
                                             <el-option label="PostgreSQL-Cluster" value="postgresql-cluster" />
+                                            <el-option label="MongoDB" value="mongodb" />
                                         </el-select>
                                     </el-form-item>
                                 </LayoutCol>
@@ -717,28 +718,38 @@
                                         >
                                             <el-option value="mail" :label="$t('xpack.alert.mail')" />
                                             <el-option
-                                                value="sms"
-                                                v-if="!globalStore.isIntl"
-                                                :disabled="!form.hasAlert || !isProductPro"
-                                                :label="$t('xpack.alert.sms')"
+                                                v-if="!isProductPro"
+                                                value="bark"
+                                                :label="$t('xpack.alert.bark')"
                                             />
                                             <el-option
                                                 value="weCom"
-                                                v-if="!globalStore.isIntl"
+                                                v-if="!isIntl"
                                                 :disabled="!form.hasAlert || !isProductPro"
                                                 :label="$t('xpack.alert.weCom')"
                                             />
                                             <el-option
                                                 value="dingTalk"
-                                                v-if="!globalStore.isIntl"
+                                                v-if="!isIntl"
                                                 :disabled="!form.hasAlert || !isProductPro"
                                                 :label="$t('xpack.alert.dingTalk')"
                                             />
                                             <el-option
                                                 value="feiShu"
-                                                v-if="!globalStore.isIntl"
+                                                v-if="!isIntl"
                                                 :disabled="!form.hasAlert || !isProductPro"
                                                 :label="$t('xpack.alert.feiShu')"
+                                            />
+                                            <el-option
+                                                v-if="isProductPro"
+                                                value="bark"
+                                                :label="$t('xpack.alert.bark')"
+                                            />
+                                            <el-option
+                                                value="sms"
+                                                v-if="!isIntl"
+                                                :disabled="!form.hasAlert || !isProductPro"
+                                                :label="$t('xpack.alert.sms')"
                                             />
                                         </el-select>
                                     </el-form-item>
@@ -852,21 +863,19 @@ import {
 } from '../helper';
 import { loadUsers } from '@/api/modules/toolbox';
 import { loadContainerUsers } from '@/api/modules/container';
-import { storeToRefs } from 'pinia';
-import { GlobalStore } from '@/store';
+import { useGlobalStore } from '@/composables/useGlobalStore';
 import LicenseImport from '@/components/license-import/index.vue';
-import { splitTimeFromSecond, transferTimeToSecond } from '@/utils/util';
+import { splitTimeFromSecond, transferTimeToSecond } from '@/utils/validate';
 import { getGroupList } from '@/api/modules/group';
 import { routerToName, routerToPath } from '@/utils/router';
 import { loadBaseDir } from '@/api/modules/setting';
 const router = useRouter();
 
-const globalStore = GlobalStore();
+const { docsUrl, isFxplay, isIntl, isProductPro } = useGlobalStore();
 const licenseRef = ref();
 const scriptFileRef = ref();
 const dirRef = ref();
 const fileRef = ref();
-const { isProductPro, isFxplay } = storeToRefs(globalStore);
 const loading = ref();
 const nextTimes = ref([]);
 
@@ -1249,7 +1258,7 @@ type FormInstance = InstanceType<typeof ElForm>;
 const formRef = ref<FormInstance>();
 
 const toDoc = () => {
-    window.open(globalStore.docsUrl + '/user_manual/cronjobs/', '_blank', 'noopener,noreferrer');
+    window.open(docsUrl.value + '/user_manual/cronjobs/', '_blank', 'noopener,noreferrer');
 };
 
 const loadDir = async (path: string) => {
@@ -1595,7 +1604,8 @@ onMounted(() => {
     width: 17% !important;
     margin-left: 20px;
     .append {
-        width: 20px;
+        margin-left: -10px;
+        width: 30px;
     }
 }
 @media only screen and (max-width: 1000px) {

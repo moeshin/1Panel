@@ -5,19 +5,17 @@ export namespace Log {
     export interface OperationLog {
         id: number;
         source: string;
-        action: string;
+        user: string;
+        node: string;
         ip: string;
         path: string;
         method: string;
         userAgent: string;
-        body: string;
-        resp: string;
-
-        status: number;
+        status: string;
         latency: number;
-        errorMessage: string;
-
-        detail: string;
+        message: string;
+        detailZH: string;
+        detailEN: string;
         createdAt: DateTimeFormats;
     }
     export interface SearchOpLog extends ReqPage {
@@ -44,6 +42,17 @@ export namespace Log {
     export interface SearchTaskReq extends ReqPage {
         type: string;
         status: string;
+        taskID?: string;
+    }
+
+    export interface TaskLogReadReq {
+        page: number;
+        pageSize: number;
+        latest?: boolean;
+        taskID?: string;
+        taskType?: string;
+        taskOperate?: string;
+        resourceID?: number;
     }
 
     export interface Task {
@@ -56,6 +65,10 @@ export namespace Log {
         operationLogID: number;
         resourceID: number;
         currentStep: string;
+        progressCurrent: number;
+        progressTotal: number;
+        progressPercent: number;
+        progressMessage: string;
         endAt: Date;
         createdAt: Date;
     }

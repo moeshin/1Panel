@@ -1,7 +1,7 @@
 <template>
     <DrawerPro
         v-model="open"
-        :header="$t('runtime.' + mode)"
+        :header="$t('commons.button.' + mode)"
         size="large"
         :resource="mode === 'edit' ? runtime.name : ''"
         @close="handleClose"
@@ -24,7 +24,7 @@
                     v-model="runtime.resource"
                     @change="changeResource(runtime.resource)"
                 >
-                    <el-radio :value="'appstore'" v-if="!globalStore.isOffLine">
+                    <el-radio :value="'appstore'" v-if="!isOffline">
                         {{ $t('menu.apps') }}
                     </el-radio>
                     <el-radio :value="'local'">
@@ -150,9 +150,9 @@
                                     </span>
                                     <div>
                                         <span
-                                            v-if="!globalStore.isFxplay"
+                                            v-if="!isFxplay"
                                             class="custom-link"
-                                            @click="openLink(globalStore.docsUrl + '/user_manual/websites/php/#php_1')"
+                                            @click="openLink(docsUrl + '/user_manual/websites/php/#php_1')"
                                         >
                                             {{ $t('php.toExtensionsList') }}
                                         </span>
@@ -179,7 +179,7 @@
                                     class="ml-1 text-xs"
                                     type="primary"
                                     target="_blank"
-                                    :href="globalStore.docsUrl + '/user_manual/websites/php/'"
+                                    :href="docsUrl + '/user_manual/websites/php/'"
                                 >
                                     {{ $t('commons.button.helpDoc') }}
                                 </el-link>
@@ -195,7 +195,7 @@
         <template #footer>
             <span>
                 <el-button @click="handleClose" :disabled="loading">{{ $t('commons.button.cancel') }}</el-button>
-                <el-button type="primary" @click="submit(runtimeForm)" :disabled="loading">
+                <el-button v-permission type="primary" @click="submit(runtimeForm)" :disabled="loading">
                     {{ $t('commons.button.confirm') }}
                 </el-button>
             </span>
@@ -213,9 +213,9 @@ import i18n from '@/lang';
 import { MsgSuccess } from '@/utils/message';
 import { FormInstance } from 'element-plus';
 import { reactive, ref } from 'vue';
-import { getLabel } from '@/utils/util';
+import { getLabel } from '@/utils/app-store';
 import { useGlobalStore } from '@/composables/useGlobalStore';
-const { globalStore } = useGlobalStore();
+const { docsUrl, isFxplay, isIntl, isOffline } = useGlobalStore();
 
 interface OperateRrops {
     id?: number;
@@ -238,7 +238,7 @@ const appReq = reactive({
     page: 1,
     pageSize: 20,
 });
-const phpSources = globalStore.isIntl
+const phpSources = isIntl.value
     ? [
           {
               label: i18n.global.t('runtime.default'),
@@ -491,7 +491,7 @@ const acceptParams = async (props: OperateRrops) => {
     initParam.value = false;
     if (props.mode === 'create') {
         Object.assign(runtime, initData(props.type));
-        if (globalStore.isOffLine) {
+        if (isOffline.value) {
             runtime.resource = 'local';
         } else {
             searchAppList(null);

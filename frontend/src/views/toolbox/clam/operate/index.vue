@@ -19,7 +19,7 @@
                     <el-form-item :label="$t('toolbox.clam.scanDir')" prop="path">
                         <el-input v-model="dialogData.rowData!.path">
                             <template #prepend>
-                                <el-button icon="Folder" @click="scanDirRef.acceptParams({ dir: true })" />
+                                <el-button icon="Folder" v-permission @click="scanDirRef.acceptParams({ dir: true })" />
                             </template>
                         </el-input>
                     </el-form-item>
@@ -38,7 +38,11 @@
                     <el-form-item v-if="hasInfectedDir()" :label="$t('toolbox.clam.infectedDir')" prop="infectedDir">
                         <el-input v-model="dialogData.rowData!.infectedDir">
                             <template #prepend>
-                                <el-button icon="Folder" @click="infectedDirRef.acceptParams({ dir: true })" />
+                                <el-button
+                                    icon="Folder"
+                                    v-permission
+                                    @click="infectedDirRef.acceptParams({ dir: true })"
+                                />
                             </template>
                         </el-input>
                     </el-form-item>
@@ -117,8 +121,8 @@
                             </el-input>
                         </div>
                     </el-form-item>
-                    <div v-if="globalStore.isIntl">
-                        <el-form-item v-if="(dialogData.rowData!.hasSpec) && !isProductPro">
+                    <div v-if="isIntl">
+                        <el-form-item v-if="dialogData.rowData!.hasSpec && !isProductPro">
                             <span class="input-help logText">
                                 {{ $t('toolbox.clam.alertHelper') }}
                                 <el-link class="link" type="primary" @click="toUpload">
@@ -127,7 +131,7 @@
                             </span>
                         </el-form-item>
                     </div>
-                    <div v-if="!globalStore.isIntl">
+                    <div v-if="!isIntl">
                         <el-form-item prop="hasAlert">
                             <el-checkbox v-model="dialogData.rowData!.hasAlert" :label="$t('xpack.alert.isAlert')" />
                             <span class="input-help">{{ $t('xpack.alert.clamHelper') }}</span>
@@ -154,29 +158,31 @@
                                 cleanable
                             >
                                 <el-option value="mail" :label="$t('xpack.alert.mail')" />
-                                <el-option
-                                    value="sms"
-                                    v-if="!globalStore.isIntl"
-                                    :disabled="!dialogData.rowData!.hasAlert || !isProductPro"
-                                    :label="$t('xpack.alert.sms')"
-                                />
+                                <el-option v-if="!isProductPro" value="bark" :label="$t('xpack.alert.bark')" />
                                 <el-option
                                     value="weCom"
-                                    v-if="!globalStore.isIntl"
+                                    v-if="!isIntl"
                                     :disabled="!dialogData.rowData!.hasAlert || !isProductPro"
                                     :label="$t('xpack.alert.weCom')"
                                 />
                                 <el-option
                                     value="dingTalk"
-                                    v-if="!globalStore.isIntl"
+                                    v-if="!isIntl"
                                     :disabled="!dialogData.rowData!.hasAlert || !isProductPro"
                                     :label="$t('xpack.alert.dingTalk')"
                                 />
                                 <el-option
                                     value="feiShu"
-                                    v-if="!globalStore.isIntl"
+                                    v-if="!isIntl"
                                     :disabled="!dialogData.rowData!.hasAlert || !isProductPro"
                                     :label="$t('xpack.alert.feiShu')"
+                                />
+                                <el-option v-if="isProductPro" value="bark" :label="$t('xpack.alert.bark')" />
+                                <el-option
+                                    value="sms"
+                                    v-if="!isIntl"
+                                    :disabled="!dialogData.rowData!.hasAlert || !isProductPro"
+                                    :label="$t('xpack.alert.sms')"
                                 />
                             </el-select>
                         </el-form-item>
@@ -215,7 +221,7 @@
         <template #footer>
             <span class="dialog-footer">
                 <el-button @click="drawerVisible = false">{{ $t('commons.button.cancel') }}</el-button>
-                <el-button :disabled="loading" type="primary" @click="onSubmit(formRef)">
+                <el-button v-permission :disabled="loading" type="primary" @click="onSubmit(formRef)">
                     {{ $t('commons.button.confirm') }}
                 </el-button>
             </span>
@@ -236,16 +242,13 @@ import LicenseImport from '@/components/license-import/index.vue';
 import { MsgError, MsgSuccess } from '@/utils/message';
 import { Toolbox } from '@/api/interface/toolbox';
 import { createClam, updateClam } from '@/api/modules/toolbox';
-import { storeToRefs } from 'pinia';
-import { GlobalStore } from '@/store';
+import { useGlobalStore } from '@/composables/useGlobalStore';
 import { specOptions, transObjToSpec, transSpecToObj, weekOptions } from '@/views/cronjob/cronjob/helper';
-import { splitTimeFromSecond, transferTimeToSecond } from '@/utils/util';
-
-const globalStore = GlobalStore();
+import { splitTimeFromSecond, transferTimeToSecond } from '@/utils/validate';
+const { isIntl, isProductPro } = useGlobalStore();
 const licenseRef = ref();
 const scanDirRef = ref();
 const infectedDirRef = ref();
-const { isProductPro } = storeToRefs(globalStore);
 interface DialogProps {
     title: string;
     rowData?: Toolbox.ClamInfo;

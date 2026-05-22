@@ -5,6 +5,7 @@ import (
 
 	"github.com/1Panel-dev/1Panel/core/app/api/v2/helper"
 	"github.com/1Panel-dev/1Panel/core/app/repo"
+	"github.com/1Panel-dev/1Panel/core/utils/security"
 	"github.com/gin-gonic/gin"
 )
 
@@ -16,12 +17,12 @@ func BindDomain() gin.HandlerFunc {
 			return
 		}
 		settingRepo := repo.NewISettingRepo()
-		status, err := settingRepo.Get(repo.WithByKey("BindDomain"))
+		bindDomain, err := settingRepo.GetValueByKey("BindDomain")
 		if err != nil {
 			helper.InternalServer(c, err)
 			return
 		}
-		if len(status.Value) == 0 {
+		if len(bindDomain) == 0 {
 			c.Next()
 			return
 		}
@@ -31,8 +32,8 @@ func BindDomain() gin.HandlerFunc {
 			domains = parts[0]
 		}
 
-		if domains != status.Value {
-			code := LoadErrCode()
+		if domains != bindDomain {
+			code := security.LoadErrCode()
 			helper.ErrWithHtml(c, code, "err_domain")
 			return
 		}

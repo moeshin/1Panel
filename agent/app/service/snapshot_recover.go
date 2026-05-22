@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path"
 	"strings"
 	"time"
@@ -133,7 +134,7 @@ func (u *SnapshotService) SnapshotRecover(req dto.SnapshotRecover) error {
 
 		var snapJson SnapshotJson
 		taskItem.AddSubTaskWithAliasAndOps(
-			"Readjson",
+			"ReadJson",
 			func(t *task.Task) error {
 				snapJson, err = readFromJson(path.Join(rootDir, snap.Name), &itemHelper)
 				return err
@@ -152,14 +153,6 @@ func (u *SnapshotService) SnapshotRecover(req dto.SnapshotRecover) error {
 			taskItem.AddSubTaskWithAliasAndOps(
 				"RecoverBaseData",
 				func(t *task.Task) error { return recoverBaseData(path.Join(rootDir, snap.Name, "base"), &itemHelper) },
-				nil, 0, 90*time.Minute,
-			)
-			req.IsNew = true
-		}
-		if req.IsNew || snap.InterruptStep == "RecoverDBData" {
-			taskItem.AddSubTaskWithAliasAndOps(
-				"RecoverDBData",
-				func(t *task.Task) error { return recoverDBData(path.Join(rootDir, snap.Name, "db"), &itemHelper) },
 				nil, 0, 90*time.Minute,
 			)
 			req.IsNew = true
@@ -222,13 +215,24 @@ func (u *SnapshotService) SnapshotRecover(req dto.SnapshotRecover) error {
 			)
 			req.IsNew = true
 		}
-		taskItem.AddSubTaskWithAliasAndOps(
-			"RecoverDBData",
-			func(t *task.Task) error {
-				return restartCompose(path.Join(snapJson.BaseDir, "1panel/docker/compose"), &itemHelper)
-			},
-			nil, 0, 90*time.Minute,
-		)
+		if req.IsNew || snap.InterruptStep == "RecoverCompose" {
+			taskItem.AddSubTaskWithAliasAndOps(
+				"RecoverCompose",
+				func(t *task.Task) error {
+					return restartCompose(path.Join(snapJson.BaseDir, "1panel/docker/compose"), &itemHelper)
+				},
+				nil, 0, 90*time.Minute,
+			)
+			req.IsNew = true
+		}
+		if req.IsNew || snap.InterruptStep == "RecoverDBData" {
+			taskItem.AddSubTaskWithAliasAndOps(
+				"RecoverDBData",
+				func(t *task.Task) error { return recoverDBData(path.Join(rootDir, snap.Name, "db"), &itemHelper) },
+				nil, 0, 90*time.Minute,
+			)
+			req.IsNew = true
+		}
 
 		if err := taskItem.Execute(); err != nil {
 			_ = settingRepo.Update("SystemStatus", "Free")
@@ -343,22 +347,22 @@ func backupBeforeRecover(name string, itemHelper *snapRecoverHelper) error {
 
 func readFromJson(rootDir string, itemHelper *snapRecoverHelper) (SnapshotJson, error) {
 	itemHelper.Task.Log("---------------------- 4 / 11 ----------------------")
-	itemHelper.Task.LogStart(i18n.GetMsgByKey("Readjson"))
+	itemHelper.Task.LogStart(i18n.GetMsgByKey("ReadJson"))
 
 	snapJsonPath := path.Join(rootDir, "base/snapshot.json")
 	var snap SnapshotJson
 	_, err := os.Stat(snapJsonPath)
-	itemHelper.Task.LogWithStatus(i18n.GetMsgByKey("ReadjsonPath"), err)
+	itemHelper.Task.LogWithStatus(i18n.GetMsgByKey("ReadJsonPath"), err)
 	if err != nil {
 		return snap, err
 	}
 	fileByte, err := os.ReadFile(snapJsonPath)
-	itemHelper.Task.LogWithStatus(i18n.GetMsgByKey("ReadjsonContent"), err)
+	itemHelper.Task.LogWithStatus(i18n.GetMsgByKey("ReadJsonContent"), err)
 	if err != nil {
 		return snap, err
 	}
 	err = json.Unmarshal(fileByte, &snap)
-	itemHelper.Task.LogWithStatus(i18n.GetMsgByKey("ReadjsonMarshal"), err)
+	itemHelper.Task.LogWithStatus(i18n.GetMsgByKey("ReadJsonMarshal"), err)
 	if err != nil {
 		return snap, err
 	}
@@ -373,7 +377,15 @@ func recoverAppData(src string, itemHelper *snapRecoverHelper) error {
 		itemHelper.Task.Log(i18n.GetMsgByKey("RecoverAppEmpty"))
 		return nil
 	}
-	if err := cmd.NewCommandMgr(cmd.WithTimeout(10*time.Minute)).RunBashCf("docker load < %s", path.Join(src, "images.tar.gz")); err != nil {
+	imageFile, err := os.Open(path.Join(src, "images.tar.gz"))
+	if err != nil {
+		itemHelper.Task.LogFailedWithErr(i18n.GetMsgByKey("RecoverAppImage"), err)
+		return fmt.Errorf("docker load images failed, %v", err)
+	}
+	defer func() { _ = imageFile.Close() }()
+	loadCmd := exec.Command("docker", "load")
+	loadCmd.Stdin = imageFile
+	if err := loadCmd.Run(); err != nil {
 		itemHelper.Task.LogFailedWithErr(i18n.GetMsgByKey("RecoverAppImage"), err)
 		return fmt.Errorf("docker load images failed, %v", err)
 	}
@@ -439,17 +451,8 @@ func recoverBaseData(src string, itemHelper *snapRecoverHelper) error {
 	return nil
 }
 
-func recoverDBData(src string, itemHelper *snapRecoverHelper) error {
-	itemHelper.Task.Log("---------------------- 7 / 11 ----------------------")
-	itemHelper.Task.LogStart(i18n.GetMsgByKey("RecoverDBData"))
-	err := itemHelper.FileOp.CopyDirWithExclude(src, global.Dir.DataDir, nil)
-
-	itemHelper.Task.LogWithStatus(i18n.GetMsgByKey("RecoverDBData"), err)
-	return err
-}
-
 func restartCompose(composePath string, itemHelper *snapRecoverHelper) error {
-	itemHelper.Task.Log("---------------------- 11 / 11 ----------------------")
+	itemHelper.Task.Log("---------------------- 7 / 11 ----------------------")
 	itemHelper.Task.LogStart(i18n.GetMsgByKey("RecoverCompose"))
 
 	composes, err := composeRepo.ListRecord()
@@ -463,12 +466,72 @@ func restartCompose(composePath string, itemHelper *snapRecoverHelper) error {
 		if _, err := os.Stat(pathItem); err != nil {
 			continue
 		}
-		upCmd := fmt.Sprintf("docker compose -f %s up -d", pathItem)
-		if err := cmd.RunDefaultBashC(upCmd); err != nil {
+		if err := cmd.NewCommandMgr(cmd.WithTimeout(10*time.Minute)).Run("docker", "compose", "-f", pathItem, "up", "-d"); err != nil {
 			itemHelper.Task.LogFailedWithErr(i18n.GetMsgByKey("RecoverCompose"), err)
 			continue
 		}
 		itemHelper.Task.LogSuccess(i18n.GetWithName("RecoverComposeItem", pathItem))
 	}
+	return nil
+}
+
+func recoverDBData(src string, itemHelper *snapRecoverHelper) error {
+	itemHelper.Task.Log("---------------------- 11 / 11 ----------------------")
+	itemHelper.Task.LogStart(i18n.GetMsgByKey("RecoverDBData"))
+	dbDir := path.Join(global.Dir.DataDir, "db")
+	if err := os.RemoveAll(dbDir); err != nil {
+		itemHelper.Task.LogWithStatus(i18n.GetMsgByKey("RecoverDBData"), err)
+		return err
+	}
+
+	err := itemHelper.FileOp.CopyDirWithExclude(src, global.Dir.DataDir, nil)
+	if err != nil {
+		itemHelper.Task.LogWithStatus(i18n.GetMsgByKey("RecoverDBData"), err)
+		return err
+	}
+	if cleanErr := cleanOrphanSQLiteSidecars(dbDir); cleanErr != nil {
+		itemHelper.Task.LogWithStatus(i18n.GetMsgByKey("RecoverDBData"), cleanErr)
+		return cleanErr
+	}
+
+	itemHelper.Task.LogWithStatus(i18n.GetMsgByKey("RecoverDBData"), nil)
+	return nil
+}
+
+func cleanOrphanSQLiteSidecars(dbDir string) error {
+	entries, err := os.ReadDir(dbDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		name := entry.Name()
+		var mainDB string
+		switch {
+		case strings.HasSuffix(name, ".db-wal"):
+			mainDB = strings.TrimSuffix(name, "-wal")
+		case strings.HasSuffix(name, ".db-shm"):
+			mainDB = strings.TrimSuffix(name, "-shm")
+		default:
+			continue
+		}
+
+		if _, statErr := os.Stat(path.Join(dbDir, mainDB)); statErr != nil {
+			if !os.IsNotExist(statErr) {
+				return statErr
+			}
+			if removeErr := os.Remove(path.Join(dbDir, name)); removeErr != nil && !os.IsNotExist(removeErr) {
+				return removeErr
+			}
+		}
+	}
+
 	return nil
 }

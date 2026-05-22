@@ -1,8 +1,10 @@
 package v2
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -133,6 +135,10 @@ func (b *BaseApi) UpdateScript(c *gin.Context) {
 }
 
 func (b *BaseApi) RunScript(c *gin.Context) {
+	if !websocket.IsWebSocketUpgrade(c.Request) {
+		helper.Success(c)
+		return
+	}
 	wsConn, err := upGrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		global.LOG.Errorf("gin context http handler failed, err: %v", err)
@@ -184,7 +190,7 @@ func (b *BaseApi) RunScript(c *gin.Context) {
 		tty.Start(quitChan)
 		go slave.Wait(quitChan)
 	} else {
-		connInfo, _, err := xpack.LoadNodeInfo(currentNode)
+		connInfo, _, err := xpack.MultiNodeProvider.LoadNodeInfo(currentNode)
 		if wshandleError(wsConn, errors.WithMessage(err, "invalid param rows in request")) {
 			return
 		}
@@ -227,4 +233,32 @@ func (b *BaseApi) RunScript(c *gin.Context) {
 	global.LOG.Info("websocket finished")
 	dt := time.Now().Add(time.Second)
 	_ = wsConn.WriteControl(websocket.CloseMessage, nil, dt)
+}
+
+var upGrader = websocket.Upgrader{
+	ReadBufferSize:  4096,
+	WriteBufferSize: 16384,
+	CheckOrigin: func(r *http.Request) bool {
+		return true
+	},
+}
+
+func wshandleError(ws *websocket.Conn, err error) bool {
+	if err != nil {
+		global.LOG.Errorf("handler ws faled:, err: %v", err)
+		dt := time.Now().Add(time.Second)
+		if ctlerr := ws.WriteControl(websocket.CloseMessage, []byte(err.Error()), dt); ctlerr != nil {
+			wsData, marshalErr := json.Marshal(terminal.WsMsg{
+				Type: terminal.WsMsgCmd,
+				Data: base64.StdEncoding.EncodeToString([]byte(err.Error())),
+			})
+			if marshalErr != nil {
+				_ = ws.WriteMessage(websocket.TextMessage, []byte("{\"type\":\"cmd\",\"data\":\"failed to encoding to json\"}"))
+			} else {
+				_ = ws.WriteMessage(websocket.TextMessage, wsData)
+			}
+		}
+		return true
+	}
+	return false
 }

@@ -2,9 +2,10 @@ package iptables
 
 import (
 	"fmt"
+	"os"
 	"strings"
-	"time"
 
+	"github.com/1Panel-dev/1Panel/agent/buserr"
 	"github.com/1Panel-dev/1Panel/agent/global"
 	"github.com/1Panel-dev/1Panel/agent/utils/cmd"
 )
@@ -25,53 +26,55 @@ func AddFilterRule(chain string, policy FilterRules) error {
 	if err := validateRuleSafety(policy, chain); err != nil {
 		return err
 	}
-	iptablesArg := fmt.Sprintf("-A %s", chain)
+	args := []string{"-A", chain}
 	if policy.Protocol != "" {
-		iptablesArg += fmt.Sprintf(" -p %s", policy.Protocol)
+		args = append(args, "-p", policy.Protocol)
 	}
 	if len(policy.SrcPort) != 0 {
-		iptablesArg += fmt.Sprintf(" --sport %s", policy.SrcPort)
+		args = append(args, "--sport", policy.SrcPort)
 	}
 	if len(policy.DstPort) != 0 {
-		iptablesArg += fmt.Sprintf(" --dport %s", policy.DstPort)
+		args = append(args, "--dport", policy.DstPort)
 	}
 	if policy.SrcIP != "" {
-		iptablesArg += fmt.Sprintf(" -s %s", policy.SrcIP)
+		args = append(args, "-s", policy.SrcIP)
 	}
 	if policy.DstIP != "" {
-		iptablesArg += fmt.Sprintf(" -d %s", policy.DstIP)
+		args = append(args, "-d", policy.DstIP)
 	}
-	iptablesArg += fmt.Sprintf(" -j %s", policy.Strategy)
+	args = append(args, "-j", policy.Strategy)
 
-	return Run(FilterTab, iptablesArg)
+	return Run(FilterTab, args...)
 }
 
 func DeleteFilterRule(chain string, policy FilterRules) error {
-	iptablesArg := fmt.Sprintf("-D %s", chain)
+	args := []string{"-D", chain}
 	if policy.Protocol != "" {
-		iptablesArg += fmt.Sprintf(" -p %s", policy.Protocol)
+		args = append(args, "-p", policy.Protocol)
 	}
 	if len(policy.SrcPort) != 0 {
-		iptablesArg += fmt.Sprintf(" --sport %s", policy.SrcPort)
+		args = append(args, "--sport", policy.SrcPort)
 	}
 	if len(policy.DstPort) != 0 {
-		iptablesArg += fmt.Sprintf(" --dport %s", policy.DstPort)
+		args = append(args, "--dport", policy.DstPort)
 	}
 	if policy.SrcIP != "" {
-		iptablesArg += fmt.Sprintf(" -s %s", policy.SrcIP)
+		args = append(args, "-s", policy.SrcIP)
 	}
 	if policy.DstIP != "" {
-		iptablesArg += fmt.Sprintf(" -d %s", policy.DstIP)
+		args = append(args, "-d", policy.DstIP)
 	}
-	iptablesArg += fmt.Sprintf(" -j %s", policy.Strategy)
+	args = append(args, "-j", policy.Strategy)
 
-	return Run(FilterTab, iptablesArg)
+	return Run(FilterTab, args...)
 }
 
 func ReadFilterRulesByChain(chain string) ([]FilterRules, error) {
 	var rules []FilterRules
-	cmdMgr := cmd.NewCommandMgr(cmd.WithIgnoreExist1(), cmd.WithTimeout(20*time.Second))
-	stdout, err := cmdMgr.RunWithStdoutBashCf("%s iptables -w -t %s -nL %s", cmd.SudoHandleCmd(), FilterTab, chain)
+	if cmd.CheckIllegal(chain) {
+		return rules, buserr.New("ErrCmdIllegal")
+	}
+	stdout, err := RunWithStd(FilterTab, "-nL", chain)
 	if err != nil {
 		return rules, fmt.Errorf("load filter fules by chain %s failed, %v", chain, err)
 	}
@@ -100,8 +103,10 @@ func ReadFilterRulesByChain(chain string) ([]FilterRules, error) {
 }
 
 func LoadDefaultStrategy(chain string) (string, error) {
-	cmdMgr := cmd.NewCommandMgr(cmd.WithIgnoreExist1(), cmd.WithTimeout(20*time.Second))
-	stdout, err := cmdMgr.RunWithStdoutBashCf("%s iptables -w -t %s -L %s", cmd.SudoHandleCmd(), FilterTab, chain)
+	if cmd.CheckIllegal(chain) {
+		return "", buserr.New("ErrCmdIllegal")
+	}
+	stdout, err := RunWithStd(FilterTab, "-L", chain)
 	if err != nil {
 		return "", fmt.Errorf("load filter fules by chain %s failed, %v", chain, err)
 	}
@@ -163,12 +168,12 @@ func LoadInitStatus(clientName, tab string) (bool, bool) {
 		}
 		return checkWithInitAndBind(initRules, bindRules, lines)
 	case "forward":
-		stdout, err := cmd.RunDefaultWithStdoutBashC("cat /proc/sys/net/ipv4/ip_forward")
+		data, err := os.ReadFile("/proc/sys/net/ipv4/ip_forward")
 		if err != nil {
 			global.LOG.Errorf("check /proc/sys/net/ipv4/ip_forward failed, err: %v", err)
 			return false, false
 		}
-		if strings.TrimSpace(stdout) == "0" {
+		if strings.TrimSpace(string(data)) == "0" {
 			return false, false
 		}
 		natRules, err := RunWithStd(NatTab, "-S")

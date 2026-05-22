@@ -28,7 +28,6 @@ import (
 	"github.com/1Panel-dev/1Panel/agent/constant"
 	"github.com/1Panel-dev/1Panel/agent/global"
 	"github.com/1Panel-dev/1Panel/agent/i18n"
-	"github.com/1Panel-dev/1Panel/agent/utils/cmd"
 	"github.com/1Panel-dev/1Panel/agent/utils/files"
 	"github.com/1Panel-dev/1Panel/agent/utils/ssl"
 	"github.com/go-acme/lego/v4/certcrypto"
@@ -51,7 +50,7 @@ func NewIWebsiteCAService() IWebsiteCAService {
 }
 
 func (w WebsiteCAService) Page(search request.WebsiteCASearch) (int64, []response.WebsiteCADTO, error) {
-	total, cas, err := websiteCARepo.Page(search.Page, search.PageSize, repo.WithOrderBy("created_at desc"))
+	total, cas, err := websiteCARepo.Page(search.Page, search.PageSize, repo.WithOrderDesc("created_at"))
 	if err != nil {
 		return 0, nil, err
 	}
@@ -188,7 +187,7 @@ func (w WebsiteCAService) ObtainSSL(req request.WebsiteCAObtain) (*model.Website
 			existDomains = append(existDomains, strings.Split(websiteSSL.Domains, ",")...)
 		}
 		for _, domain := range existDomains {
-			if ipAddress := net.ParseIP(domain); ipAddress == nil {
+			if ipAddress := common.ParseIPLoose(domain); ipAddress == nil {
 				domains = append(domains, domain)
 			} else {
 				ips = append(ips, ipAddress)
@@ -220,7 +219,7 @@ func (w WebsiteCAService) ObtainSSL(req request.WebsiteCAObtain) (*model.Website
 		if req.Domains != "" {
 			domainArray := strings.Split(req.Domains, "\n")
 			for _, domain := range domainArray {
-				if ipAddress := net.ParseIP(domain); ipAddress == nil {
+				if ipAddress := common.ParseIPLoose(domain); ipAddress == nil {
 					if domain != "localhost" && !common.IsValidDomain(domain) {
 						err = buserr.WithName("ErrDomainFormat", domain)
 						return nil, err
@@ -378,8 +377,7 @@ func (w WebsiteCAService) ObtainSSL(req request.WebsiteCAObtain) (*model.Website
 			workDir = websiteSSL.Dir
 		}
 		logger.Println(i18n.GetMsgByKey("ExecShellStart"))
-		cmdMgr := cmd.NewCommandMgr(cmd.WithTimeout(30*time.Minute), cmd.WithLogger(logger), cmd.WithWorkDir(workDir))
-		if err = cmdMgr.RunBashC(websiteSSL.Shell); err != nil {
+		if err = runShellScriptFile(workDir, websiteSSL.Shell, logger); err != nil {
 			logger.Println(i18n.GetMsgWithMap("ErrExecShell", map[string]interface{}{"err": err.Error()}))
 		} else {
 			logger.Println(i18n.GetMsgByKey("ExecShellSuccess"))
@@ -443,7 +441,7 @@ func (w WebsiteCAService) DownloadFile(id uint) (*os.File, error) {
 		return nil, err
 	}
 	fileName := ca.Name + ".zip"
-	if err = fileOp.Compress([]string{path.Join(dir, "ca.crt"), path.Join(dir, "ca.key")}, dir, fileName, files.SdkZip, ""); err != nil {
+	if err = fileOp.Compress(context.Background(), []string{path.Join(dir, "ca.crt"), path.Join(dir, "ca.key")}, dir, fileName, files.SdkZip, "", nil); err != nil {
 		return nil, err
 	}
 	return os.Open(path.Join(dir, fileName))

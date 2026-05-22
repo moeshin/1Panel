@@ -44,10 +44,13 @@ type IBackupService interface {
 
 	MysqlBackup(db dto.CommonBackup) error
 	PostgresqlBackup(db dto.CommonBackup) error
+	MongodbBackup(db dto.CommonBackup) error
 	MysqlRecover(db dto.CommonRecover) error
 	PostgresqlRecover(db dto.CommonRecover) error
+	MongodbRecover(db dto.CommonRecover) error
 	MysqlRecoverByUpload(req dto.CommonRecover) error
 	PostgresqlRecoverByUpload(req dto.CommonRecover) error
+	MongodbRecoverByUpload(req dto.CommonRecover) error
 
 	RedisBackup(db dto.CommonBackup) error
 	RedisRecover(db dto.CommonRecover) error
@@ -57,6 +60,11 @@ type IBackupService interface {
 
 	AppBackup(db dto.CommonBackup) (*model.BackupRecord, error)
 	AppRecover(req dto.CommonRecover) error
+
+	ContainerBackup(req dto.CommonBackup) error
+	ContainerRecover(req dto.CommonRecover) error
+	ComposeBackup(req dto.CommonBackup) error
+	ComposeRecover(req dto.CommonRecover) error
 }
 
 func NewIBackupService() IBackupService {
@@ -72,7 +80,7 @@ func (u *BackupService) GetLocalDir() (string, error) {
 }
 
 func (u *BackupService) SearchWithPage(req dto.SearchPageWithType) (int64, interface{}, error) {
-	options := []repo.DBOption{repo.WithOrderBy("created_at desc")}
+	options := []repo.DBOption{repo.WithOrderDesc("created_at")}
 	if len(req.Type) != 0 {
 		options = append(options, repo.WithByType(req.Type))
 	}
@@ -372,7 +380,7 @@ func (u *BackupService) checkBackupConn(backup *model.BackupAccount) (bool, erro
 }
 
 func (u *BackupService) LoadBackupOptions() ([]dto.BackupOption, error) {
-	accounts, err := backupRepo.List(repo.WithOrderBy("created_at desc"))
+	accounts, err := backupRepo.List(repo.WithOrderDesc("created_at"))
 	if err != nil {
 		return nil, err
 	}

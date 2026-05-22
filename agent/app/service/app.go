@@ -12,6 +12,8 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -34,6 +36,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+var (
+	appStoreSyncMu  sync.Mutex
+	appStoreSyncing bool
+)
+
 type AppService struct {
 }
 
@@ -42,13 +49,17 @@ type IAppService interface {
 	GetAppTags(ctx *gin.Context) ([]response.TagDTO, error)
 	GetApp(ctx *gin.Context, key string) (*response.AppDTO, error)
 	GetAppDetail(appId uint, version, appType string) (response.AppDetailDTO, error)
-	Install(req request.AppInstallCreate) (*model.AppInstall, error)
+	Install(req request.AppInstallCreate, executeScript bool) (*model.AppInstall, error)
 	SyncAppListFromRemote(taskID string) error
 	GetAppUpdate() (*response.AppUpdateRes, error)
 	GetAppDetailByID(id uint) (*response.AppDetailDTO, error)
 	SyncAppListFromLocal(taskID string)
 	GetAppIcon(key string) ([]byte, string, string, error)
 	GetAppDetailByKey(appKey, version string) (response.AppDetailSimpleDTO, error)
+}
+
+type appInstallHooks struct {
+	AfterCopyData func(appInstall *model.AppInstall) error
 }
 
 func NewIAppService() IAppService {
@@ -115,7 +126,7 @@ func (a AppService) PageApp(ctx *gin.Context, req request.AppSearch) (*response.
 	lang := strings.ToLower(common.GetLang(ctx))
 	for _, ap := range apps {
 		if req.Type == "php" {
-			if !global.CONF.Base.IsOffLine && (ap.RequiredPanelVersion == 0 || !common.CompareAppVersion(common.GetSystemVersion(info.SystemVersion), fmt.Sprintf("%f", ap.RequiredPanelVersion))) {
+			if !global.CONF.Base.IsOffline && (ap.RequiredPanelVersion == 0 || !common.CompareAppVersion(common.GetSystemVersion(info.SystemVersion), fmt.Sprintf("%f", ap.RequiredPanelVersion))) {
 				continue
 			}
 		}
@@ -333,7 +344,11 @@ func (a AppService) GetAppDetailByID(id uint) (*response.AppDetailDTO, error) {
 	return res, nil
 }
 
-func (a AppService) Install(req request.AppInstallCreate) (appInstall *model.AppInstall, err error) {
+func (a AppService) Install(req request.AppInstallCreate, executeScript bool) (appInstall *model.AppInstall, err error) {
+	return a.installWithHooks(req, executeScript, nil)
+}
+
+func (a AppService) installWithHooks(req request.AppInstallCreate, executeScript bool, hooks *appInstallHooks) (appInstall *model.AppInstall, err error) {
 	if err = docker.CreateDefaultDockerNetwork(); err != nil {
 		err = buserr.WithDetail("Err1PanelNetworkFailed", err.Error(), nil)
 		return
@@ -410,7 +425,7 @@ func (a AppService) Install(req request.AppInstallCreate) (appInstall *model.App
 		}
 	} else {
 		if appDetail.DockerCompose == "" {
-			dockerComposeUrl := fmt.Sprintf("%s/%s/1panel/%s/%s/docker-compose.yml", global.CONF.RemoteURL.AppRepo, global.CONF.Base.Mode, app.Key, appDetail.Version)
+			dockerComposeUrl := fmt.Sprintf("%s/%s/1panel/%s/%s/docker-compose.yml", global.AppRepoURL(), global.CONF.Base.Mode, app.Key, appDetail.Version)
 			_, composeRes, err = req_helper.HandleRequest(dockerComposeUrl, http.MethodGet, constant.TimeOut20s)
 			if err != nil {
 				return
@@ -510,6 +525,10 @@ func (a AppService) Install(req request.AppInstallCreate) (appInstall *model.App
 	}
 	appInstall.Env = string(paramByte)
 
+	var maxSort int
+	global.DB.Model(&model.AppInstall{}).Where("favorite = ?", false).Select("COALESCE(MAX(sort_order),0)").Scan(&maxSort)
+	appInstall.SortOrder = maxSort + 1
+
 	if err = appInstallRepo.Create(context.Background(), appInstall); err != nil {
 		return
 	}
@@ -527,8 +546,15 @@ func (a AppService) Install(req request.AppInstallCreate) (appInstall *model.App
 		if err = copyData(t, app, appDetail, appInstall, req); err != nil {
 			return err
 		}
-		if err = runScript(t, appInstall, "init"); err != nil {
-			return err
+		if hooks != nil && hooks.AfterCopyData != nil {
+			if err = hooks.AfterCopyData(appInstall); err != nil {
+				return err
+			}
+		}
+		if executeScript {
+			if err = runScript(t, appInstall, "init"); err != nil {
+				return err
+			}
 		}
 		if app.Key == "openresty" {
 			if err = handleSiteDir(app, appDetail, req, t); err != nil {
@@ -551,7 +577,7 @@ func (a AppService) Install(req request.AppInstallCreate) (appInstall *model.App
 		_ = appInstallRepo.Save(context.Background(), appInstall)
 	}
 
-	installTask.AddSubTask(task.GetTaskName(appInstall.Name, task.TaskInstall, task.TaskScopeApp), installApp, handleAppStatus)
+	installTask.AddSubTaskWithOps(task.GetTaskName(appInstall.Name, task.TaskInstall, task.TaskScopeApp), installApp, handleAppStatus, 0, time.Hour)
 
 	go func() {
 		if taskErr := installTask.Execute(); taskErr != nil {
@@ -809,7 +835,7 @@ func (a AppService) GetAppUpdate() (*response.AppUpdateRes, error) {
 		return res, nil
 	}
 
-	versionUrl := fmt.Sprintf("%s/%s/1panel.json.version.txt", global.CONF.RemoteURL.AppRepo, global.CONF.Base.Mode)
+	versionUrl := fmt.Sprintf("%s/%s/1panel.json.version.txt", global.AppRepoURL(), global.CONF.Base.Mode)
 	_, versionRes, err := req_helper.HandleRequest(versionUrl, http.MethodGet, constant.TimeOut20s)
 	if err != nil {
 		return nil, err
@@ -840,6 +866,13 @@ func (a AppService) GetAppUpdate() (*response.AppUpdateRes, error) {
 			res.CanUpdate = true
 			return res, err
 		}
+		if appicon.IsIconFile(app.Icon) {
+			fileName, _ := appicon.ParseIconField(app.Icon)
+			if fileName == "" || !appicon.IconFileExists(fileName) {
+				res.CanUpdate = true
+				return res, err
+			}
+		}
 	}
 
 	list, err := getAppList()
@@ -863,7 +896,7 @@ func getAppFromRepo(downloadPath string) error {
 		return err
 	}
 
-	if err := fileOp.Decompress(packagePath, global.Dir.ResourceDir, files.SdkZip, ""); err != nil {
+	if err := fileOp.Decompress(context.Background(), packagePath, global.Dir.ResourceDir, files.SdkZip, ""); err != nil {
 		return err
 	}
 	defer func() {
@@ -874,7 +907,7 @@ func getAppFromRepo(downloadPath string) error {
 
 func getAppList() (*dto.AppList, error) {
 	list := &dto.AppList{}
-	if err := getAppFromRepo(fmt.Sprintf("%s/%s/1panel.json.zip", global.CONF.RemoteURL.AppRepo, global.CONF.Base.Mode)); err != nil {
+	if err := getAppFromRepo(fmt.Sprintf("%s/%s/1panel.json.zip", global.AppRepoURL(), global.CONF.Base.Mode)); err != nil {
 		return nil, err
 	}
 	listFile := filepath.Join(global.Dir.ResourceDir, "1panel.json")
@@ -897,33 +930,61 @@ var InitTypes = map[string]struct{}{
 }
 
 func deleteCustomApp() {
+	installs, err := appInstallRepo.ListBy(context.Background())
+	if err != nil {
+		global.LOG.Errorf("[AppStore] deleteCustomApp: failed to list installs, skipping: %v", err)
+		return
+	}
 	var appIDS []uint
-	installs, _ := appInstallRepo.ListBy(context.Background())
 	for _, install := range installs {
 		appIDS = append(appIDS, install.AppId)
 	}
 	var ops []repo.DBOption
-	ops = append(ops, repo.WithByIDNotIn(appIDS))
 	if len(appIDS) > 0 {
 		ops = append(ops, repo.WithByIDNotIn(appIDS))
 	}
-	apps, _ := appRepo.GetBy(ops...)
+	apps, err := appRepo.GetBy(ops...)
+	if err != nil {
+		global.LOG.Errorf("[AppStore] deleteCustomApp: failed to get apps, skipping: %v", err)
+		return
+	}
 	var deleteIDS []uint
 	for _, app := range apps {
 		if app.Resource == constant.AppResourceCustom {
 			deleteIDS = append(deleteIDS, app.ID)
 		}
 	}
-	_ = appRepo.DeleteByIDs(context.Background(), deleteIDS)
-	_ = appDetailRepo.DeleteByAppIds(context.Background(), deleteIDS)
+	if len(deleteIDS) == 0 {
+		return
+	}
+	if err = appRepo.DeleteByIDs(context.Background(), deleteIDS); err != nil {
+		global.LOG.Errorf("[AppStore] deleteCustomApp: failed to delete apps: %v", err)
+	}
+	if err = appDetailRepo.DeleteByAppIds(context.Background(), deleteIDS); err != nil {
+		global.LOG.Errorf("[AppStore] deleteCustomApp: failed to delete app details: %v", err)
+	}
 }
 
 func (a AppService) SyncAppListFromRemote(taskID string) (err error) {
-	if xpack.IsUseCustomApp() {
+	if xpack.MultiNodeProvider.IsUseCustomApp() {
 		return nil
 	}
+
+	appStoreSyncMu.Lock()
+	global.LOG.Info("[AppStore] sync app from remote task create start")
+	if appStoreSyncing {
+		appStoreSyncMu.Unlock()
+		global.LOG.Info("[AppStore] sync already in progress, skipping")
+		return nil
+	}
+	appStoreSyncing = true
+	appStoreSyncMu.Unlock()
+
 	syncTask, err := task.NewTaskWithOps(i18n.GetMsgByKey("App"), task.TaskSync, task.TaskScopeAppStore, taskID, 0)
 	if err != nil {
+		appStoreSyncMu.Lock()
+		appStoreSyncing = false
+		appStoreSyncMu.Unlock()
 		return err
 	}
 
@@ -933,13 +994,29 @@ func (a AppService) SyncAppListFromRemote(taskID string) (err error) {
 	syncTask.AddSubTask(i18n.GetMsgByKey("SyncAppDetail"), a.createSyncAppStoreMetaTask(&sharedCtx), nil)
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				global.LOG.Errorf("[AppStore] sync goroutine recovered from panic: %v", r)
+				if updateErr := NewISettingService().Update("AppStoreSyncStatus", constant.StatusError); updateErr != nil {
+					global.LOG.Warnf("[AppStore] failed to update sync status after panic: %v", updateErr)
+				}
+			}
+			appStoreSyncMu.Lock()
+			appStoreSyncing = false
+			appStoreSyncMu.Unlock()
+		}()
 		if err := syncTask.Execute(); err != nil {
-			_ = NewISettingService().Update("AppStoreLastModified", "0")
-			_ = NewISettingService().Update("AppStoreSyncStatus", constant.StatusError)
+			if updateErr := NewISettingService().Update("AppStoreLastModified", "0"); updateErr != nil {
+				global.LOG.Warnf("[AppStore] failed to reset last modified: %v", updateErr)
+			}
+			if updateErr := NewISettingService().Update("AppStoreSyncStatus", constant.StatusError); updateErr != nil {
+				global.LOG.Warnf("[AppStore] failed to update sync status to error: %v", updateErr)
+			}
 			return
 		}
 	}()
 
+	global.LOG.Info("[AppStore] sync app from remote task create ok")
 	return nil
 }
 

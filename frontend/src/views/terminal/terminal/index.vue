@@ -45,82 +45,44 @@
                 </template>
                 <Terminal
                     :style="{
-                        height: cmdPanelVisible
-                            ? `calc(100vh - ${loadHeightWithPanel()})`
-                            : `calc(100vh - ${loadHeight()})`,
+                        height: `calc(100vh - ${loadHeight()})`,
                         'background-color': `var(--panel-logs-bg-color)`,
                     }"
                     :ref="'t-' + item.index"
                     :key="item.Refresh"
                 ></Terminal>
 
-                <transition name="el-fade-in">
-                    <div
-                        v-show="cmdPanelVisible"
-                        class="mb-2 border-b border-[var(--el-border-color)] pb-2 w-full bg-[var(--el-bg-color)]"
+                <div class="flex items-center gap-2 w-full py-2 flex-wrap">
+                    <AiSetting v-if="!isMobile" class="shrink-0" />
+                    <el-cascader
+                        v-model="quickCmd"
+                        :options="commandTree"
+                        :props="quickCommandProps"
+                        :show-all-levels="false"
+                        filterable
+                        clearable
+                        class="quick-command-cascader min-w-[180px] max-w-[260px] shrink-0"
+                        :placeholder="$t('terminal.quickCommand')"
+                        @change="handleQuickCommandChange"
                     >
-                        <el-tabs v-model="activeGroupTab" type="card" class="command-tabs">
-                            <el-tab-pane
-                                v-for="group in commandTree"
-                                :key="group.value"
-                                :label="''"
-                                :name="group.value"
+                        <template #default="{ data }">
+                            <el-tooltip
+                                v-if="!data.children?.length"
+                                placement="right"
+                                popper-class="command-detail-tooltip"
                             >
-                                <template #label>
-                                    <span class="group-tab-label">
-                                        <span v-if="group.label.length <= 6">{{ group.label }}</span>
-                                        <el-tooltip v-else :content="group.label" placement="top">
-                                            <span>{{ group.label.substring(0, 6) }}...</span>
-                                        </el-tooltip>
-                                    </span>
+                                <template #content>
+                                    <div class="command-detail-content">{{ data.value }}</div>
                                 </template>
-                                <div class="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-2 p-0">
-                                    <el-tag
-                                        v-for="cmd in group.children"
-                                        :key="cmd.value"
-                                        class="command-tag"
-                                        @click="executeCommand(cmd.value)"
-                                        type="info"
-                                        effect="plain"
-                                    >
-                                        <div class="flex items-center justify-between w-full gap-1.5">
-                                            <span class="command-tag-name" :title="cmd.label">
-                                                {{
-                                                    cmd.label.length > 8 ? cmd.label.substring(0, 8) + '...' : cmd.label
-                                                }}
-                                            </span>
-                                            <el-popover placement="top" :width="320" trigger="hover">
-                                                <template #reference>
-                                                    <el-icon class="command-preview-icon">
-                                                        <InfoFilled />
-                                                    </el-icon>
-                                                </template>
-                                                <div class="command-preview">
-                                                    <div class="command-preview-name">
-                                                        <strong>{{ cmd.label }}</strong>
-                                                    </div>
-                                                    <div class="command-preview-value">{{ cmd.value }}</div>
-                                                </div>
-                                            </el-popover>
-                                        </div>
-                                    </el-tag>
+                                <div class="cascader-option">
+                                    <span class="cascader-option-label">{{ data.label }}</span>
                                 </div>
-                            </el-tab-pane>
-                        </el-tabs>
-                    </div>
-                </transition>
-
-                <div class="flex items-center gap-3 w-full py-2 flex-wrap">
-                    <el-button
-                        @click="cmdPanelVisible = !cmdPanelVisible"
-                        type="primary"
-                        class="min-w-[120px] max-w-[150px] shrink-0"
-                    >
-                        {{ $t('terminal.quickCommand') }}
-                        <el-icon class="ml-1">
-                            <component :is="cmdPanelVisible ? 'ArrowUp' : 'ArrowDown'" />
-                        </el-icon>
-                    </el-button>
+                            </el-tooltip>
+                            <div v-else class="cascader-option">
+                                <span class="cascader-option-label">{{ data.label }}</span>
+                            </div>
+                        </template>
+                    </el-cascader>
                     <el-input
                         v-model="batchVal"
                         @keydown.enter.exact.prevent="batchInput"
@@ -150,6 +112,7 @@
                         <div class="p-2 space-y-2">
                             <div class="flex gap-2">
                                 <button
+                                    v-if="!isNodeAdmin"
                                     @click="onNewSsh"
                                     class="flex-1 flex flex-col items-center justify-center px-3 py-2.5 bg-[var(--el-fill-color-light)] hover:bg-[var(--panel-main-bg-color-9)] rounded transition-colors duration-200 cursor-pointer group border-0 outline-none"
                                 >
@@ -180,65 +143,66 @@
                                     </span>
                                 </button>
                             </div>
+                            <template v-if="!isNodeAdmin">
+                                <el-divider class="my-0" />
 
-                            <el-divider class="my-0" />
-
-                            <div class="search-container px-1 py-1 bg-[var(--el-fill-color-light)] rounded">
-                                <el-input
-                                    v-model="hostFilterInfo"
-                                    class="w-full"
-                                    clearable
-                                    suffix-icon="Search"
-                                    :placeholder="$t('commons.button.search')"
-                                    size="small"
+                                <div class="search-container px-1 py-1 bg-[var(--el-fill-color-light)] rounded">
+                                    <el-input
+                                        v-model="hostFilterInfo"
+                                        class="w-full"
+                                        clearable
+                                        suffix-icon="Search"
+                                        :placeholder="$t('commons.button.search')"
+                                        size="small"
+                                    >
+                                        <template #prefix>
+                                            <el-icon class="el-input__icon"><Search /></el-icon>
+                                        </template>
+                                    </el-input>
+                                </div>
+                                <el-tree
+                                    ref="treeRef"
+                                    :expand-on-click-node="false"
+                                    node-key="id"
+                                    :default-expand-all="true"
+                                    :data="hostTree"
+                                    :props="defaultProps"
+                                    :filter-node-method="filterHost"
+                                    :empty-text="$t('terminal.noHost')"
+                                    class="host-tree"
                                 >
-                                    <template #prefix>
-                                        <el-icon class="el-input__icon"><Search /></el-icon>
-                                    </template>
-                                </el-input>
-                            </div>
-                            <el-tree
-                                ref="treeRef"
-                                :expand-on-click-node="false"
-                                node-key="id"
-                                :default-expand-all="true"
-                                :data="hostTree"
-                                :props="defaultProps"
-                                :filter-node-method="filterHost"
-                                :empty-text="$t('terminal.noHost')"
-                                class="host-tree"
-                            >
-                                <template #default="{ node, data }">
-                                    <span class="custom-tree-node w-full">
-                                        <span
-                                            v-if="node.label === 'Default'"
-                                            class="text-xs font-medium text-[var(--el-text-color-primary)]"
-                                        >
-                                            {{ $t('commons.table.default') }}
-                                        </span>
-                                        <div v-else class="w-full min-w-0">
-                                            <span v-if="node.label.length <= 22">
-                                                <a
-                                                    @click="onClickConn(node, data)"
-                                                    class="text-xs text-[var(--el-text-color-primary)] hover:text-[var(--el-color-primary)] transition-colors cursor-pointer block truncate"
-                                                >
-                                                    {{ node.label }}
-                                                </a>
+                                    <template #default="{ node, data }">
+                                        <span class="custom-tree-node w-full">
+                                            <span
+                                                v-if="node.label === 'Default'"
+                                                class="text-xs font-medium text-[var(--el-text-color-primary)]"
+                                            >
+                                                {{ $t('commons.table.default') }}
                                             </span>
-                                            <el-tooltip v-else :content="node.label" placement="right">
-                                                <span>
+                                            <div v-else class="w-full min-w-0">
+                                                <span v-if="node.label.length <= 22">
                                                     <a
                                                         @click="onClickConn(node, data)"
                                                         class="text-xs text-[var(--el-text-color-primary)] hover:text-[var(--el-color-primary)] transition-colors cursor-pointer block truncate"
                                                     >
-                                                        {{ node.label.substring(0, 30) }}...
+                                                        {{ node.label }}
                                                     </a>
                                                 </span>
-                                            </el-tooltip>
-                                        </div>
-                                    </span>
-                                </template>
-                            </el-tree>
+                                                <el-tooltip v-else :content="node.label" placement="right">
+                                                    <span>
+                                                        <a
+                                                            @click="onClickConn(node, data)"
+                                                            class="text-xs text-[var(--el-text-color-primary)] hover:text-[var(--el-color-primary)] transition-colors cursor-pointer block truncate"
+                                                        >
+                                                            {{ node.label.substring(0, 30) }}...
+                                                        </a>
+                                                    </span>
+                                                </el-tooltip>
+                                            </div>
+                                        </span>
+                                    </template>
+                                </el-tree>
+                            </template>
                         </div>
                     </el-popover>
                 </template>
@@ -253,7 +217,7 @@
         <el-tooltip :content="loadTooltip()" placement="top">
             <el-button
                 @click="toggleFullscreen"
-                v-if="!mobile"
+                v-if="!isMobile"
                 class="bg-transparent border-0 absolute right-[50px] font-semibold text-sm"
                 :style="{ top: loadFullScreenHeight() }"
                 icon="FullScreen"
@@ -270,7 +234,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, getCurrentInstance, watch, nextTick, computed, onMounted } from 'vue';
+import { ref, getCurrentInstance, watch, nextTick, onMounted, onBeforeUnmount } from 'vue';
 import Terminal from '@/components/terminal/index.vue';
 import HostDialog from '@/views/terminal/terminal/host-create.vue';
 import type Node from 'element-plus/es/components/tree/src/model/node';
@@ -279,17 +243,17 @@ import screenfull from 'screenfull';
 import i18n from '@/lang';
 import { Host } from '@/api/interface/host';
 import { getHostTree, testByID, testLocalConn } from '@/api/modules/terminal';
-import { GlobalStore } from '@/store';
+import { useGlobalStore } from '@/composables/useGlobalStore';
 import router from '@/routers';
 import { getCommandTree } from '@/api/modules/command';
-import { getAgentSettingByKey } from '@/api/modules/setting';
+import { getAgentSettingInfo } from '@/api/modules/setting';
+import AiSetting from '@/views/terminal/setting/ai/index.vue';
+import { MsgWarning } from '@/utils/message';
+
+const { isFullScreen, isMobile, isNodeAdmin, openMenuTabs } = useGlobalStore();
 
 const dialogRef = ref();
 const ctx = getCurrentInstance() as any;
-const globalStore = GlobalStore();
-const mobile = computed(() => {
-    return globalStore.isMobile();
-});
 
 const toggleFullscreen = () => {
     if (screenfull.isEnabled) {
@@ -297,7 +261,7 @@ const toggleFullscreen = () => {
     }
 };
 const loadTooltip = () => {
-    return i18n.global.t('commons.button.' + (globalStore.isFullScreen ? 'quitFullscreen' : 'fullscreen'));
+    return i18n.global.t('commons.button.' + (isFullScreen.value ? 'quitFullscreen' : 'fullscreen'));
 };
 
 let timer: ReturnType<typeof setInterval> | null = null;
@@ -306,8 +270,9 @@ const terminalTabs = ref([]) as any;
 let tabIndex = 0;
 
 const commandTree = ref();
-const cmdPanelVisible = ref(false);
-const activeGroupTab = ref('');
+const quickCommandProps = {
+    expandTrigger: 'hover' as const,
+};
 let quickCmd = ref();
 let batchVal = ref();
 let isBatch = ref<boolean>(false);
@@ -329,22 +294,30 @@ interface Tree {
 const initCmd = ref('');
 
 const acceptParams = async () => {
-    globalStore.isFullScreen = false;
+    isFullScreen.value = false;
     loadCommandTree();
-    loadHostTree();
+    if (!isNodeAdmin.value) {
+        loadHostTree();
+    } else {
+        hostTree.value = [];
+    }
     if (terminalTabs.value.length === 0) {
-        await getAgentSettingByKey('LocalSSHConnShow').then((res) => {
-            if (res.data === 'Enable') {
-                onNewLocal();
-            }
-        });
+        if (isNodeAdmin.value) {
+            onNewLocal();
+        } else {
+            await getAgentSettingInfo().then((res) => {
+                if (res.data?.localSSHConnShow === 'Enable') {
+                    onNewLocal();
+                }
+            });
+        }
     }
     timer = setInterval(() => {
         syncTerminal();
     }, 1000 * 5);
-    if (!mobile.value) {
+    if (!isMobile.value) {
         screenfull.on('change', () => {
-            globalStore.isFullScreen = screenfull.isFullscreen;
+            isFullScreen.value = screenfull.isFullscreen;
         });
     }
 };
@@ -360,16 +333,13 @@ const cleanTimer = () => {
 };
 
 const loadHeight = () => {
-    return globalStore.openMenuTabs ? '230px' : '190px';
-};
-const loadHeightWithPanel = () => {
-    return globalStore.openMenuTabs ? '470px' : '430px';
+    return openMenuTabs.value ? '250px' : '210px';
 };
 const loadEmptyHeight = () => {
-    return globalStore.openMenuTabs ? '201px' : '156px';
+    return openMenuTabs.value ? '201px' : '156px';
 };
 const loadFullScreenHeight = () => {
-    return globalStore.openMenuTabs ? '105px' : '60px';
+    return openMenuTabs.value ? '105px' : '60px';
 };
 
 const handleTabsRemove = (targetName: string, action: 'remove' | 'add') => {
@@ -396,6 +366,10 @@ const handleTabsRemove = (targetName: string, action: 'remove' | 'add') => {
 };
 
 const loadHostTree = async () => {
+    if (isNodeAdmin.value) {
+        hostTree.value = [];
+        return;
+    }
     const res = await getHostTree({});
     hostTree.value = res.data;
 };
@@ -414,9 +388,6 @@ const loadCommandTree = async () => {
             item.label = i18n.global.t('commons.table.default');
         }
     }
-    if (commandTree.value.length > 0) {
-        activeGroupTab.value = commandTree.value[0].value;
-    }
 };
 
 const executeCommand = (command: string) => {
@@ -430,6 +401,14 @@ const executeCommand = (command: string) => {
     } else {
         ctx.refs[`t-${terminalValue.value}`] && ctx.refs[`t-${terminalValue.value}`][0].sendMsg(command + '\n');
     }
+};
+
+const handleQuickCommandChange = (val: Array<string>) => {
+    if (!val?.length) {
+        return;
+    }
+    executeCommand(val[val.length - 1]);
+    quickCmd.value = '';
 };
 
 function batchInput() {
@@ -454,6 +433,10 @@ function beforeLeave(activeName: string) {
 }
 
 const onNewSsh = () => {
+    if (isNodeAdmin.value) {
+        MsgWarning(i18n.global.t('terminal.nodeAdminLocalOnly'));
+        return;
+    }
     dialogRef.value!.acceptParams({ isLocal: false });
 };
 const onNewLocal = async () => {
@@ -473,7 +456,7 @@ const onNewLocal = async () => {
     nextTick(() => {
         ctx.refs[`t-${terminalValue.value}`] &&
             ctx.refs[`t-${terminalValue.value}`][0].acceptParams({
-                endpoint: '/api/v2/hosts/terminal',
+                endpoint: '/api/v2/hosts/terminal/local',
                 initCmd: initCmd.value,
                 error: '',
             });
@@ -499,7 +482,7 @@ const onReconnect = async (item: any) => {
         nextTick(() => {
             ctx.refs[`t-${item.index}`] &&
                 ctx.refs[`t-${item.index}`][0].acceptParams({
-                    endpoint: '/api/v2/hosts/terminal',
+                    endpoint: '/api/v2/hosts/terminal/local',
                     initCmd: initCmd.value,
                     error: res.data ? '' : 'Failed to set up the connection. Please check the host information',
                 });
@@ -513,7 +496,7 @@ const onReconnect = async (item: any) => {
     nextTick(() => {
         ctx.refs[`t-${item.index}`] &&
             ctx.refs[`t-${item.index}`][0].acceptParams({
-                endpoint: '/api/v2/core/hosts/terminal',
+                endpoint: '/api/v2/hosts/terminal/ssh',
                 args: `id=${item.wsID}`,
                 initCmd: initCmd.value,
                 error: res.data ? '' : 'Failed to set up the connection. Please check the host information',
@@ -524,6 +507,10 @@ const onReconnect = async (item: any) => {
 };
 
 const onConnTerminal = async (title: string, wsID: number) => {
+    if (isNodeAdmin.value) {
+        MsgWarning(i18n.global.t('terminal.nodeAdminLocalOnly'));
+        return;
+    }
     const res = await testByID(wsID);
     terminalTabs.value.push({
         index: tabIndex,
@@ -536,7 +523,7 @@ const onConnTerminal = async (title: string, wsID: number) => {
     nextTick(() => {
         ctx.refs[`t-${terminalValue.value}`] &&
             ctx.refs[`t-${terminalValue.value}`][0].acceptParams({
-                endpoint: '/api/v2/core/hosts/terminal',
+                endpoint: '/api/v2/hosts/terminal/ssh',
                 args: `id=${wsID}`,
                 initCmd: initCmd.value,
                 error: res.data ? '' : 'Authentication failed. Please check the host information!',
@@ -556,7 +543,7 @@ function syncTerminal() {
 }
 
 const changeFullScreen = () => {
-    globalStore.isFullScreen = screenfull.isFullscreen;
+    isFullScreen.value = screenfull.isFullscreen;
 };
 
 defineExpose({
@@ -651,97 +638,32 @@ onMounted(() => {
     transition: height 0.2s ease;
 }
 
-.command-tabs {
-    :deep(.el-tabs__header) {
-        margin-bottom: 0;
-        background-color: var(--el-bg-color);
-    }
-    :deep(.el-tabs__content) {
-        height: 180px;
-        overflow-y: auto;
-        overflow-x: hidden;
-        background-color: var(--el-bg-color);
-    }
-    :deep(.el-tabs__item) {
-        min-width: 80px;
-        max-width: 110px;
-        text-align: center;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        overflow: hidden;
-        padding: 0 8px;
-    }
-}
-.group-tab-label {
-    width: 90px;
-    display: inline-block;
-    text-align: center;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    font-size: 14px;
-}
-
-.command-tag {
-    cursor: pointer;
-    height: auto;
-    padding: 8px 12px;
-    transition: all 0.3s;
-    border-radius: 4px;
-    white-space: nowrap;
-    border: 1px solid transparent;
-
-    &:hover {
-        border-color: var(--el-color-primary);
+.quick-command-cascader {
+    :deep(.el-input__wrapper) {
+        border-radius: 6px;
     }
 }
 
-.command-tag-name {
-    font-weight: 500;
-    font-size: 13px;
-    flex: 1;
-    text-align: left;
-}
-
-.command-preview-icon {
-    font-size: 14px;
-    opacity: 0.6;
-    transition: opacity 0.3s;
-    cursor: help;
-    flex-shrink: 0;
+.cascader-option {
+    width: 100%;
     display: flex;
     align-items: center;
-
-    &:hover {
-        opacity: 1;
-    }
+    min-width: 0;
 }
 
-.command-preview {
-    .command-preview-name {
-        font-size: 13px;
-        margin-bottom: 6px;
-        color: var(--el-text-color-primary);
-        word-break: break-word;
-    }
-
-    .command-preview-value {
-        font-size: 12px;
-        font-family: monospace;
-        padding: 8px;
-        background-color: var(--el-fill-color-light);
-        border-radius: 4px;
-        color: var(--el-text-color-regular);
-        word-break: break-all;
-        white-space: pre-wrap;
-    }
-}
-
-.command-tag-name {
+.cascader-option-label {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    display: inline-block;
+}
+
+:deep(.command-detail-tooltip) {
+    max-width: 420px;
+}
+
+.command-detail-content {
+    white-space: pre-wrap;
+    word-break: break-all;
+    line-height: 1.5;
 }
 </style>

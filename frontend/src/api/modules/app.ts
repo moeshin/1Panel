@@ -47,7 +47,7 @@ export const searchAppInstalled = (search: App.AppInstallSearch, node?: string) 
 };
 
 export const listAppInstalled = () => {
-    return http.get<Array<App.AppInstalledInfo>>('apps/installed/list');
+    return http.get<Array<App.AppInstalledOption>>('apps/installed/list');
 };
 
 export const getAppPort = (type: string, name: string) => {
@@ -121,6 +121,10 @@ export const cancelAppIgnore = (req: App.CancelAppIgnore) => {
 
 export const updateInstallConfig = (req: App.AppConfigUpdate) => {
     return http.post(`apps/installed/config/update`, req);
+};
+
+export const updateAppInstallSort = (items: Array<{ installID: number; sortOrder: number }>) => {
+    return http.post(`apps/installed/sort/update`, { items });
 };
 
 export const syncCutomAppStore = (req: App.AppStoreSync) => {

@@ -2,8 +2,8 @@ import http from '@/api';
 import { ResPage, ReqPage } from '../interface';
 import { Host } from '../interface/host';
 import { TimeoutEnum } from '@/enums/http-enum';
-import { deepCopy } from '@/utils/util';
-import { Base64 } from 'js-base64';
+import { deepCopy } from '@/utils/misc';
+import { encodeBase64Fields } from '@/utils/base64';
 
 // firewall
 export const loadFireBaseInfo = (tab: string) => {
@@ -65,12 +65,6 @@ export const operateFilterChain = (name: string, op: string) => {
 export const loadMonitor = (param: Host.MonitorSearch) => {
     return http.post<Array<Host.MonitorData>>(`/hosts/monitor/search`, param);
 };
-export const getGPUOptions = () => {
-    return http.get<Host.MonitorGPUOptions>(`/hosts/monitor/gpuoptions`);
-};
-export const loadGPUMonitor = (param: Host.MonitorGPUSearch) => {
-    return http.post<Host.MonitorGPUData>(`/hosts/monitor/gpu/search`, param);
-};
 export const getNetworkOptions = () => {
     return http.get<Array<string>>(`/hosts/monitor/netoptions`);
 };
@@ -100,33 +94,17 @@ export const updateSSH = (params: Host.SSHUpdate) => {
 export const loadSSHFile = (name: string) => {
     return http.post<string>(`/hosts/ssh/file`, { name: name });
 };
-export const updateSSHByFile = (key: string, file: string) => {
-    return http.post(`/hosts/ssh/file/update`, { key: key, value: file }, TimeoutEnum.T_60S);
+export const updateSSHByFile = (key: string, value: string, path = '') => {
+    return http.post(`/hosts/ssh/file/update`, { key, path, value }, TimeoutEnum.T_60S);
 };
 export const createCert = (params: Host.RootCert) => {
     let request = deepCopy(params) as Host.RootCert;
-    if (request.passPhrase) {
-        request.passPhrase = Base64.encode(request.passPhrase);
-    }
-    if (request.privateKey) {
-        request.privateKey = Base64.encode(request.privateKey);
-    }
-    if (request.publicKey) {
-        request.publicKey = Base64.encode(request.publicKey);
-    }
+    encodeBase64Fields(request, ['passPhrase', 'privateKey', 'publicKey']);
     return http.post(`/hosts/ssh/cert`, request);
 };
 export const editCert = (params: Host.RootCert) => {
     let request = deepCopy(params) as Host.RootCert;
-    if (request.passPhrase) {
-        request.passPhrase = Base64.encode(request.passPhrase);
-    }
-    if (request.privateKey) {
-        request.privateKey = Base64.encode(request.privateKey);
-    }
-    if (request.publicKey) {
-        request.publicKey = Base64.encode(request.publicKey);
-    }
+    encodeBase64Fields(request, ['passPhrase', 'privateKey', 'publicKey']);
     return http.post(`/hosts/ssh/cert/update`, request);
 };
 export const searchCert = (params: ReqPage) => {

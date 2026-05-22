@@ -3,6 +3,10 @@ package service
 import (
 	"bufio"
 	"fmt"
+	"os"
+	"path"
+	"strings"
+
 	"github.com/1Panel-dev/1Panel/agent/app/dto"
 	"github.com/1Panel-dev/1Panel/agent/app/dto/request"
 	"github.com/1Panel-dev/1Panel/agent/app/dto/response"
@@ -16,9 +20,6 @@ import (
 	"github.com/1Panel-dev/1Panel/agent/utils/nginx/components"
 	"github.com/1Panel-dev/1Panel/agent/utils/nginx/parser"
 	"golang.org/x/crypto/bcrypt"
-	"os"
-	"path"
-	"strings"
 )
 
 func (w WebsiteService) GetAuthBasics(req request.NginxAuthReq) (res response.NginxAuthRes, err error) {
@@ -260,6 +261,10 @@ func (w WebsiteService) UpdatePathAuthBasic(req request.NginxPathAuthUpdate) err
 	if !fileOp.Stat(passDir) {
 		_ = fileOp.CreateDir(passDir, constant.DirPerm)
 	}
+	safeName := path.Base(req.Name)
+	if safeName != req.Name || strings.Contains(safeName, "..") {
+		return buserr.New("ErrInvalidParams")
+	}
 	confPath := path.Join(authDir, fmt.Sprintf("%s.conf", req.Name))
 	passPath := path.Join(passDir, fmt.Sprintf("%s.pass", req.Name))
 	var config *components.Config
@@ -306,7 +311,7 @@ func (w WebsiteService) UpdatePathAuthBasic(req request.NginxPathAuthUpdate) err
 	}
 	nginxInclude := fmt.Sprintf("/www/sites/%s/path_auth/*.conf", website.Alias)
 	if err = updateNginxConfig(constant.NginxScopeServer, []dto.NginxParam{{Name: "include", Params: []string{nginxInclude}}}, &website); err != nil {
-		return nil
+		return err
 	}
 	return nil
 }

@@ -42,6 +42,19 @@
                         ></el-option>
                     </el-select>
                 </el-form-item>
+                <el-alert
+                    v-if="showOpenclawHttpRollbackNotice"
+                    type="warning"
+                    :closable="false"
+                    show-icon
+                    class="upgrade-notice"
+                >
+                    <template #title>{{ $t('app.openclawHttpsUpgradeNoticeTitle') }}</template>
+                    <div class="upgrade-notice-content">
+                        <div>1. {{ $t('app.openclawHttpsUpgradeNoticeItem1') }}</div>
+                        <div>2. {{ $t('app.openclawHttpsUpgradeNoticeItem2') }}</div>
+                    </div>
+                </el-alert>
                 <el-form-item prop="backup" v-if="operateReq.operate === 'upgrade'">
                     <el-checkbox v-model="operateReq.backup" :label="$t('app.backupApp')" />
                     <span class="input-help">
@@ -86,9 +99,10 @@ import CodemirrorPro from '@/components/codemirror-pro/index.vue';
 import { App } from '@/api/interface/app';
 import { getAppUpdateVersions, ignoreUpgrade, installedOp } from '@/api/modules/app';
 import { getAppStoreConfig } from '@/api/modules/setting';
+import { isOpenclawCurrentHTTPVersion, isOpenclawHTTPSWindowVersion } from '@/utils/agent';
 import i18n from '@/lang';
 import { ElMessageBox, FormInstance } from 'element-plus';
-import { reactive, ref, onBeforeUnmount } from 'vue';
+import { computed, onBeforeUnmount, reactive, ref } from 'vue';
 import { MsgSuccess } from '@/utils/message';
 import { Rules } from '@/global/form-rules';
 import bus from '@/global/bus';
@@ -121,7 +135,7 @@ const newContent = ref('');
 const em = defineEmits(['close']);
 const handleClose = () => {
     open.value = false;
-    em('close', open);
+    em('close', open.value);
 };
 
 const newCompose = ref('');
@@ -135,6 +149,17 @@ const ignoreAppReq = reactive({
 });
 const isEdit = ref(false);
 const node = ref('');
+const currentVersion = ref('');
+const currentAppKey = ref('');
+
+const showOpenclawHttpRollbackNotice = computed(() => {
+    return (
+        operateReq.operate === 'upgrade' &&
+        currentAppKey.value === 'openclaw' &&
+        isOpenclawHTTPSWindowVersion(currentVersion.value) &&
+        isOpenclawCurrentHTTPVersion(operateReq.version)
+    );
+});
 
 const toLink = (link: string) => {
     window.open(link, '_blank');
@@ -174,6 +199,8 @@ const acceptParams = (appInstall: App.AppInstallDto, op: string, opNode?: string
         node.value = currentNode.value;
     }
     isEdit.value = appInstall.isEdit;
+    currentVersion.value = appInstall.version;
+    currentAppKey.value = appInstall.appKey;
     operateReq.installId = appInstall.id;
     operateReq.operate = op;
     resourceName.value = appInstall.name;
@@ -268,3 +295,13 @@ defineExpose({
     acceptParams,
 });
 </script>
+
+<style lang="scss" scoped>
+.upgrade-notice {
+    margin-bottom: 16px;
+}
+
+.upgrade-notice-content {
+    line-height: 1.8;
+}
+</style>

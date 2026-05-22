@@ -122,8 +122,8 @@
                     <span class="input-help">{{ $t('app.pullImageHelper') }}</span>
                 </el-form-item>
 
-                <PushtoNode
-                    v-if="isMaster && isMasterProductPro && batchInstallSupport"
+                <PushToNode
+                    v-if="isMaster && isXpackOrEE && batchInstallSupport"
                     :push-node="formData.pushNode"
                     :nodes="formData.nodes"
                     type="app"
@@ -144,21 +144,22 @@
     </div>
 </template>
 
-<script lang="ts" setup name="AppInstallForm">
+<script lang="ts" setup>
 import { App } from '@/api/interface/app';
 import { getAppByKey, getAppDetail, getAppInstalledByID } from '@/api/modules/app';
+import { getAppStoreConfig } from '@/api/modules/setting';
 import { Rules, checkNumberRange } from '@/global/form-rules';
 import { FormInstance, FormRules } from 'element-plus';
 import { ref, watch } from 'vue';
 import Params from '../params/index.vue';
 import { Container } from '@/api/interface/container';
 import CodemirrorPro from '@/components/codemirror-pro/index.vue';
-import { computeSizeFromMB } from '@/utils/util';
+import { computeSizeFromMB } from '@/utils/size';
 import { loadResourceLimit } from '@/api/modules/container';
 import { useGlobalStore } from '@/composables/useGlobalStore';
-const { isOffLine, isMasterProductPro, isMaster } = useGlobalStore();
+const { isMaster, isOffline, isXpackOrEE } = useGlobalStore();
 
-const PushtoNode = defineAsyncComponent(async () => {
+const PushToNode = defineAsyncComponent(async () => {
     const modules = import.meta.glob('@/xpack/views/ssl/index.vue');
     const loader = modules['/src/xpack/views/ssl/index.vue'];
     if (loader) {
@@ -298,8 +299,21 @@ const getVersionDetail = async (version: string) => {
     } catch (error) {}
 };
 
+const loadInstallDefaultConfig = async () => {
+    try {
+        const res = await getAppStoreConfig(operateNode.value);
+        formData.value.allowPort = res.data.installAllowPort === 'Enable';
+    } catch (error) {
+        formData.value.allowPort = false;
+    }
+};
+
 const initForm = async (appKey: string) => {
+    operateNode.value = undefined;
+    env.value = undefined;
+    masterNodeAddr.value = undefined;
     formData.value.name = appKey.replace(/^local/, '');
+    await loadInstallDefaultConfig();
     const res = await getAppByKey(appKey);
     currentApp.value = res.data;
     appVersions.value = currentApp.value.versions;
@@ -308,7 +322,7 @@ const initForm = async (appKey: string) => {
         formData.value.version = defaultVersion;
         getVersionDetail(defaultVersion);
     }
-    if (isOffLine.value) {
+    if (isOffline.value) {
         formData.value.pullImage = false;
     }
 };
@@ -353,6 +367,7 @@ const initClusterForm = async (props: ClusterProps) => {
     }
     masterNodeAddr.value = props.masterNodeAddr;
     operateNode.value = props.node;
+    await loadInstallDefaultConfig();
     const res = await getAppByKey(props.key, props.node);
     currentApp.value = res.data;
     appVersions.value = currentApp.value.versions;

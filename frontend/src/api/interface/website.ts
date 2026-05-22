@@ -130,12 +130,23 @@ export namespace Website {
         id: number;
         operate: string;
         logType: string;
+    }
+
+    export interface WebSiteLogReq {
+        id: number;
         page?: number;
         pageSize?: number;
+        logType: string;
     }
 
     export interface OptionReq {
         types?: string[];
+    }
+
+    export interface WebsiteOption {
+        id: number;
+        primaryDomain: string;
+        alias: string;
     }
 
     export interface WebSiteLog {
@@ -198,20 +209,20 @@ export namespace Website {
     export interface DnsAccount extends CommonModel {
         name: string;
         type: string;
-        authorization: Object;
+        authorization: object;
     }
 
     export interface DnsAccountCreate {
         name: string;
         type: string;
-        authorization: Object;
+        authorization: object;
     }
 
     export interface DnsAccountUpdate {
         id: number;
         name: string;
         type: string;
-        authorization: Object;
+        authorization: object;
     }
 
     export interface SSL extends CommonModel {
@@ -397,7 +408,7 @@ export namespace Website {
         content: string;
     }
 
-    export interface CustomRewirte {
+    export interface CustomRewrite {
         operate: string;
         name: string;
         content: string;
@@ -439,6 +450,7 @@ export namespace Website {
         proxyProtocol?: string;
         sni?: boolean;
         proxySSLName: string;
+        sslVerify?: boolean;
         cors: boolean;
         allowOrigins: string;
         allowMethods: string;
@@ -446,6 +458,17 @@ export namespace Website {
         allowCredentials: boolean;
         preflight: boolean;
         browserCache?: 'enable' | 'disable' | 'noModify';
+    }
+
+    export interface ProxyDel {
+        id: number;
+        name: string;
+    }
+
+    export interface ProxyStatusUpdate {
+        id: number;
+        name: string;
+        status: string;
     }
 
     export interface ProxReplace {

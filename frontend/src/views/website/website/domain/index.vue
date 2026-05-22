@@ -1,6 +1,6 @@
 <template>
     <div class="name-row">
-        <div>
+        <div class="name-main">
             <el-form :model="formData" :rules="rules" ref="formRef" v-if="isEditing" @submit.prevent>
                 <el-form-item prop="domainName" class="inline-form-item">
                     <el-input
@@ -13,12 +13,28 @@
                     />
                 </el-form-item>
             </el-form>
-            <el-text v-else type="primary" class="cursor-pointer" @click="openConfig(row.id)">
-                {{ row.primaryDomain }}
-                <span class="text-gray-400" v-if="isPunycoded(row.primaryDomain)">
-                    ({{ GetPunyCodeDomain(row.primaryDomain) }})
-                </span>
-            </el-text>
+            <el-tooltip
+                v-else
+                effect="dark"
+                placement="bottom-start"
+                popper-class="website-domain-tooltip"
+                :show-after="300"
+                :disabled="!shouldShowDomainTooltip(row.primaryDomain)"
+            >
+                <template #content>
+                    <div class="website-domain-tooltip__content">
+                        {{ getDisplayDomain(row.primaryDomain) }}
+                    </div>
+                </template>
+                <el-text type="primary" class="cursor-pointer domain-text" @click="openConfig(row.id)">
+                    <span class="domain-text__content">
+                        {{ row.primaryDomain }}
+                        <span class="text-gray-400" v-if="isPunycoded(row.primaryDomain)">
+                            ({{ GetPunyCodeDomain(row.primaryDomain) }})
+                        </span>
+                    </span>
+                </el-text>
+            </el-tooltip>
             <el-popover
                 placement="right"
                 trigger="hover"
@@ -44,11 +60,18 @@
                     </tbody>
                 </table>
             </el-popover>
-            <el-button link icon="edit" class="ml-2.5" @click="startEdit" v-if="!isEditing"></el-button>
+            <el-button v-permission link icon="edit" class="ml-2.5" @click="startEdit" v-if="!isEditing"></el-button>
         </div>
         <div>
             <el-tooltip effect="dark" :content="$t('website.cancelFavorite')" placement="top-start" v-if="row.favorite">
-                <el-button link size="large" icon="StarFilled" type="warning" @click="favoriteWebsite(row)"></el-button>
+                <el-button
+                    v-permission
+                    link
+                    size="large"
+                    icon="StarFilled"
+                    type="warning"
+                    @click="favoriteWebsite(row)"
+                ></el-button>
             </el-tooltip>
 
             <el-tooltip
@@ -57,7 +80,7 @@
                 placement="top-start"
                 v-if="!row.favorite && isHovered"
             >
-                <el-button link icon="Star" type="info" @click="favoriteWebsite(row)"></el-button>
+                <el-button v-permission link icon="Star" type="info" @click="favoriteWebsite(row)"></el-button>
             </el-tooltip>
         </div>
     </div>
@@ -69,8 +92,7 @@ import { listDomains } from '@/api/modules/website';
 import { Website } from '@/api/interface/website';
 import { routerToNameWithParams } from '@/utils/router';
 import { Rules } from '@/global/form-rules';
-import { GetPunyCodeDomain, isPunycoded } from '@/utils/util';
-
+import { GetPunyCodeDomain, isPunycoded } from '@/utils/misc';
 interface Props {
     row: Website.Website;
     isHovered: boolean;
@@ -182,6 +204,17 @@ const getUrl = (domain: Website.Domain, website: Website.Website): string => {
 const favoriteWebsite = (row: Website.Website) => {
     emit('favoriteChange', row);
 };
+
+const getDisplayDomain = (domain: string) => {
+    if (!isPunycoded(domain)) {
+        return domain;
+    }
+    return `${domain} (${GetPunyCodeDomain(domain)})`;
+};
+
+const shouldShowDomainTooltip = (domain: string) => {
+    return getDisplayDomain(domain).length > 30;
+};
 </script>
 
 <style lang="css" scoped>
@@ -189,8 +222,35 @@ const favoriteWebsite = (row: Website.Website) => {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 8px;
     width: 100%;
 }
+
+.name-main {
+    display: flex;
+    align-items: center;
+    flex: 1;
+    min-width: 0;
+}
+
+.domain-text {
+    display: inline-flex;
+    align-items: center;
+    flex: 1;
+    width: 0;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.domain-text__content {
+    display: inline-block;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 :deep(.el-form) {
     margin: 0;
     line-height: 1;
@@ -207,5 +267,15 @@ const favoriteWebsite = (row: Website.Website) => {
 
 .domain-input {
     width: 200px;
+}
+
+:deep(.website-domain-tooltip) {
+    max-width: min(720px, calc(100vw - 120px));
+}
+
+.website-domain-tooltip__content {
+    white-space: normal;
+    word-break: break-all;
+    line-height: 1.5;
 }
 </style>

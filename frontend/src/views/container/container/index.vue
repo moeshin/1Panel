@@ -22,32 +22,43 @@
             </template>
 
             <template #leftToolBar>
-                <el-button type="primary" @click="onContainerOperate('')">
-                    {{ $t('container.create') }}
+                <el-button v-permission type="primary" @click="onContainerOperate('')">
+                    {{ $t('commons.button.create') }}
                 </el-button>
-                <el-button type="primary" plain @click="onClean()">
+                <el-button v-permission type="primary" plain @click="onImportCreate()">
+                    {{ $t('commons.button.import') }}
+                </el-button>
+                <el-button v-permission type="primary" plain @click="onClean()">
                     {{ $t('container.containerPrune') }}
                 </el-button>
                 <el-button-group class="button-group">
-                    <el-button :disabled="checkStatus('start', null)" @click="onOperate('start', null)">
+                    <el-button v-permission :disabled="checkStatus('start', null)" @click="onOperate('start', null)">
                         {{ $t('commons.operate.start') }}
                     </el-button>
-                    <el-button :disabled="checkStatus('stop', null)" @click="onOperate('stop', null)">
+                    <el-button v-permission :disabled="checkStatus('stop', null)" @click="onOperate('stop', null)">
                         {{ $t('commons.operate.stop') }}
                     </el-button>
-                    <el-button :disabled="checkStatus('restart', null)" @click="onOperate('restart', null)">
+                    <el-button
+                        v-permission
+                        :disabled="checkStatus('restart', null)"
+                        @click="onOperate('restart', null)"
+                    >
                         {{ $t('commons.button.restart') }}
                     </el-button>
-                    <el-button :disabled="checkStatus('kill', null)" @click="onOperate('kill', null)">
+                    <el-button v-permission :disabled="checkStatus('kill', null)" @click="onOperate('kill', null)">
                         {{ $t('container.kill') }}
                     </el-button>
-                    <el-button :disabled="checkStatus('pause', null)" @click="onOperate('pause', null)">
+                    <el-button v-permission :disabled="checkStatus('pause', null)" @click="onOperate('pause', null)">
                         {{ $t('container.pause') }}
                     </el-button>
-                    <el-button :disabled="checkStatus('unpause', null)" @click="onOperate('unpause', null)">
+                    <el-button
+                        v-permission
+                        :disabled="checkStatus('unpause', null)"
+                        @click="onOperate('unpause', null)"
+                    >
                         {{ $t('container.unpause') }}
                     </el-button>
-                    <el-button :disabled="checkStatus('remove', null)" @click="onOperate('remove', null)">
+                    <el-button v-permission :disabled="checkStatus('remove', null)" @click="onOperate('remove', null)">
                         {{ $t('commons.button.delete') }}
                     </el-button>
                 </el-button-group>
@@ -78,6 +89,7 @@
                     :pagination-config="paginationConfig"
                     v-model:selects="selects"
                     :data="data"
+                    row-key="containerID"
                     @sort-change="search"
                     @search="search"
                     @cell-mouse-enter="showFavorite"
@@ -95,7 +107,7 @@
                         prop="name"
                         sortable="custom"
                         fix
-                        :fixed="mobile ? false : 'left'"
+                        :fixed="isMobile ? false : 'left'"
                         show-overflow-tooltip
                     >
                         <template #default="{ row, $index }">
@@ -113,6 +125,7 @@
                                         size="large"
                                         :icon="row.isPinned ? 'StarFilled' : 'Star'"
                                         type="warning"
+                                        v-permission
                                         @click="changePinned(row, true)"
                                     />
                                 </el-tooltip>
@@ -127,10 +140,15 @@
                     />
                     <el-table-column :label="$t('commons.table.status')" min-width="150" prop="state">
                         <template #default="{ row }">
-                            <el-dropdown placement="bottom">
-                                <Status :key="row.state" :status="row.state" :operate="true"></Status>
+                            <el-dropdown
+                                placement="bottom"
+                                @visible-change="
+                                    (visible) => handleStatusDropdownVisibleChange(row.containerID, visible)
+                                "
+                            >
+                                <Status v-permission :status="row.state" :operate="true" />
                                 <template #dropdown>
-                                    <el-dropdown-menu>
+                                    <el-dropdown-menu v-if="activeDropdownContainerId === row.containerID">
                                         <el-dropdown-item
                                             :disabled="checkStatus('start', row)"
                                             @click="onOperate('start', row)"
@@ -252,7 +270,7 @@
                     </el-table-column>
                     <el-table-column
                         :label="$t('container.ip')"
-                        :width="mobile ? 120 : 'auto'"
+                        :width="isMobile ? 120 : 'auto'"
                         min-width="120"
                         prop="network"
                     >
@@ -293,7 +311,7 @@
                     </el-table-column>
                     <el-table-column
                         :label="$t('commons.table.port')"
-                        :width="mobile ? 260 : 'auto'"
+                        :width="isMobile ? 260 : 'auto'"
                         min-width="200"
                         prop="ports"
                     >
@@ -340,6 +358,7 @@
                         <template #default="{ row }">
                             <fu-input-rw-switch
                                 v-model="row.description"
+                                v-permission
                                 @enter="changePinned(row, false)"
                                 @blur="changePinned(row, false)"
                             />
@@ -353,11 +372,11 @@
                     />
                     <fu-table-operations
                         fix
-                        width="200px"
+                        width="220px"
                         :ellipsis="2"
                         :buttons="buttons"
                         :label="$t('commons.table.operate')"
-                        :fixed="mobile ? false : 'right'"
+                        :fixed="isMobile ? false : 'right'"
                         prop="operate"
                     />
                 </ComplexTable>
@@ -375,8 +394,11 @@
         <CommitDialog @search="search" ref="dialogCommitRef" />
         <MonitorDialog ref="dialogMonitorRef" />
         <TerminalDialog ref="dialogTerminalRef" />
+        <ContainerFileDrawer ref="dialogFileBrowserRef" />
 
         <PortJumpDialog ref="dialogPortJumpRef" />
+        <Backups ref="dialogBackupRef" />
+        <Uploads ref="uploadRef" @close="search" />
         <TaskLog ref="taskLogRef" width="70%" @close="search" />
     </div>
 </template>
@@ -388,13 +410,16 @@ import UpgradeDialog from '@/views/container/container/upgrade/index.vue';
 import CommitDialog from '@/views/container/container/commit/index.vue';
 import MonitorDialog from '@/views/container/container/monitor/index.vue';
 import TerminalDialog from '@/views/container/container/terminal/index.vue';
+import ContainerFileDrawer from '@/views/container/container/file-browser/index.vue';
 import ContainerInspectDialog from '@/views/container/container/inspect/index.vue';
 import PortJumpDialog from '@/components/port-jump/index.vue';
 import TaskLog from '@/components/log/task/index.vue';
+import Backups from '@/components/backup/index.vue';
+import Uploads from '@/components/upload/index.vue';
 import DockerStatus from '@/views/container/docker-status/index.vue';
 import ContainerLogDialog from '@/components/log/container-drawer/index.vue';
 import Status from '@/components/status/index.vue';
-import { reactive, onMounted, ref, computed } from 'vue';
+import { reactive, onMounted, ref } from 'vue';
 import {
     containerItemStats,
     containerListStats,
@@ -406,21 +431,20 @@ import {
 import { Container } from '@/api/interface/container';
 import i18n from '@/lang';
 import { MsgSuccess, MsgWarning } from '@/utils/message';
-import { GlobalStore } from '@/store';
+import { useGlobalStore } from '@/composables/useGlobalStore';
 import { routerToName, routerToNameWithQuery } from '@/utils/router';
 import router from '@/routers';
-import { computeSize2, computeSizeForDocker, computeCPU, newUUID } from '@/utils/util';
+import { computeSize2, computeSizeForDocker, computeCPU } from '@/utils/size';
+import { newUUID } from '@/utils/id';
 import { updateCommonDescription } from '@/api/modules/setting';
-const globalStore = GlobalStore();
 
-const mobile = computed(() => {
-    return globalStore.isMobile();
-});
+const { currentNode, isAdminOrNodeAdmin, isMobile } = useGlobalStore();
+
 const isActive = ref(false);
 const isExist = ref(false);
 
 const loading = ref(false);
-const data = ref();
+const data = ref<any[]>([]);
 const selects = ref<any>([]);
 const paginationConfig = reactive({
     cacheSizeKey: 'container-page-size',
@@ -435,6 +459,7 @@ const searchName = ref();
 const dialogUpgradeRef = ref();
 const dialogCommitRef = ref();
 const dialogPortJumpRef = ref();
+const dialogBackupRef = ref();
 const opRef = ref();
 const includeAppStore = ref(true);
 const columns = ref([]);
@@ -447,6 +472,101 @@ const tags = ref([]);
 const activeTag = ref('all');
 
 const hoveredRowIndex = ref(-1);
+const activeDropdownContainerId = ref('');
+const statFields = [
+    'cpuTotalUsage',
+    'systemUsage',
+    'cpuPercent',
+    'percpuUsage',
+    'memoryCache',
+    'memoryUsage',
+    'memoryLimit',
+    'memoryPercent',
+] as const;
+
+const assignFields = (target: Record<string, any>, source: Record<string, any>, skipKeys: string[] = []) => {
+    const skipSet = new Set(skipKeys);
+    for (const [key, value] of Object.entries(source)) {
+        if (skipSet.has(key)) {
+            continue;
+        }
+        if (target[key] !== value) {
+            target[key] = value;
+        }
+    }
+};
+
+const syncContainerRows = (containers: Record<string, any>[]) => {
+    const currentMap = new Map(data.value.map((item) => [item.containerID, item]));
+    data.value = containers.map((container) => {
+        const current = currentMap.get(container.containerID);
+        if (!current) {
+            return container;
+        }
+        assignFields(current, container);
+        return current;
+    });
+};
+
+const applyStatsToRows = (stats: Record<string, any>[]) => {
+    if (stats.length === 0 || data.value.length === 0) {
+        return;
+    }
+    const statsMap = new Map(stats.map((item) => [item.containerID, item]));
+    for (const container of data.value) {
+        const stat = statsMap.get(container.containerID);
+        if (!stat) {
+            continue;
+        }
+        if (!container.hasLoad) {
+            container.hasLoad = true;
+        }
+        for (const field of statFields) {
+            if (container[field] !== stat[field]) {
+                container[field] = stat[field];
+            }
+        }
+    }
+};
+
+const updateTags = (status: Record<string, any>) => {
+    const nextTags = [];
+    if (status.containerCount) {
+        nextTags.push({ key: 'all', count: status.containerCount });
+    }
+    if (status.running) {
+        nextTags.push({ key: 'running', count: status.running });
+    }
+    if (status.paused) {
+        nextTags.push({ key: 'paused', count: status.paused });
+    }
+    if (status.restarting) {
+        nextTags.push({ key: 'restarting', count: status.restarting });
+    }
+    if (status.removing) {
+        nextTags.push({ key: 'removing', count: status.removing });
+    }
+    if (status.created) {
+        nextTags.push({ key: 'created', count: status.created });
+    }
+    if (status.dead) {
+        nextTags.push({ key: 'dead', count: status.dead });
+    }
+    if (status.exited) {
+        nextTags.push({ key: 'exited', count: status.exited });
+    }
+    tags.value = nextTags;
+};
+
+const handleStatusDropdownVisibleChange = (containerID: string, visible: boolean) => {
+    if (visible) {
+        activeDropdownContainerId.value = containerID;
+        return;
+    }
+    if (activeDropdownContainerId.value === containerID) {
+        activeDropdownContainerId.value = '';
+    }
+};
 
 const goDashboard = async (port: any) => {
     if (port.indexOf('127.0.0.1') !== -1) {
@@ -496,17 +616,26 @@ const search = async (column?: any) => {
         excludeAppStore: !includeAppStore.value,
     };
     loading.value = true;
-    loadStats();
-    loadContainerCount();
-    await searchContainer(params)
-        .then((res) => {
-            loading.value = false;
-            data.value = res.data.items || [];
-            paginationConfig.total = res.data.total;
-        })
-        .catch(() => {
-            loading.value = false;
-        });
+    const [containerResult, statsResult, statusResult] = await Promise.allSettled([
+        searchContainer(params),
+        containerListStats(),
+        loadContainerStatus(),
+    ]);
+    loading.value = false;
+
+    if (containerResult.status === 'fulfilled') {
+        const containers = containerResult.value.data.items || [];
+        syncContainerRows(containers);
+        paginationConfig.total = containerResult.value.data.total;
+    }
+
+    if (statsResult.status === 'fulfilled') {
+        applyStatsToRows(statsResult.value.data || []);
+    }
+
+    if (statusResult.status === 'fulfilled') {
+        updateTags(statusResult.value.data || {});
+    }
 };
 
 const searchWithStatus = (item: string) => {
@@ -543,36 +672,6 @@ const changePinned = (row: any, isPinned: boolean) => {
     });
 };
 
-const loadContainerCount = async () => {
-    await loadContainerStatus().then((res) => {
-        tags.value = [];
-        if (res.data.containerCount) {
-            tags.value.push({ key: 'all', count: res.data.containerCount });
-        }
-        if (res.data.running) {
-            tags.value.push({ key: 'running', count: res.data.running });
-        }
-        if (res.data.paused) {
-            tags.value.push({ key: 'paused', count: res.data.paused });
-        }
-        if (res.data.restarting) {
-            tags.value.push({ key: 'restarting', count: res.data.restarting });
-        }
-        if (res.data.removing) {
-            tags.value.push({ key: 'removing', count: res.data.removing });
-        }
-        if (res.data.created) {
-            tags.value.push({ key: 'created', count: res.data.created });
-        }
-        if (res.data.dead) {
-            tags.value.push({ key: 'dead', count: res.data.dead });
-        }
-        if (res.data.exited) {
-            tags.value.push({ key: 'exited', count: res.data.exited });
-        }
-    });
-};
-
 const refresh = async () => {
     let filterItem = props.filters ? props.filters : '';
     let params = {
@@ -584,21 +683,9 @@ const refresh = async () => {
         orderBy: paginationConfig.orderBy,
         order: paginationConfig.order,
     };
-    loadStats();
-    const res = await searchContainer(params);
-    let containers = res.data.items || [];
-    for (const container of containers) {
-        for (const c of data.value) {
-            c.hasLoad = true;
-            if (container.containerID == c.containerID) {
-                for (let key in container) {
-                    if (key !== 'cpuPercent' && key !== 'memoryPercent') {
-                        c[key] = container[key];
-                    }
-                }
-            }
-        }
-    }
+    const [containerResult, statsResult] = await Promise.all([searchContainer(params), containerListStats()]);
+    syncContainerRows(containerResult.data.items || []);
+    applyStatsToRows(statsResult.data || []);
 };
 
 const loadSize = async (row: any) => {
@@ -609,32 +696,27 @@ const loadSize = async (row: any) => {
     });
 };
 
-const loadStats = async () => {
-    const res = await containerListStats();
-    let stats = res.data || [];
-    if (stats.length === 0) {
-        return;
-    }
-    for (const container of data.value) {
-        for (const item of stats) {
-            if (container.containerID === item.containerID) {
-                container.hasLoad = true;
-                container.cpuTotalUsage = item.cpuTotalUsage;
-                container.systemUsage = item.systemUsage;
-                container.cpuPercent = item.cpuPercent;
-                container.percpuUsage = item.percpuUsage;
-                container.memoryCache = item.memoryCache;
-                container.memoryUsage = item.memoryUsage;
-                container.memoryLimit = item.memoryLimit;
-                container.memoryPercent = item.memoryPercent;
-                break;
-            }
-        }
-    }
-};
-
 const onContainerOperate = async (container: string) => {
     routerToNameWithQuery('ContainerCreate', { name: container });
+};
+
+const onBackup = (row: Container.ContainerInfo) => {
+    dialogBackupRef.value!.acceptParams({
+        type: 'container',
+        name: row.name,
+        detailName: '',
+    });
+};
+
+const uploadRef = ref();
+const onImportCreate = () => {
+    uploadRef.value!.acceptParams({
+        type: 'container',
+        name: '',
+        detailName: '',
+        remark: '.tar.gz',
+        node: currentNode.value,
+    });
 };
 
 const dialogMonitorRef = ref();
@@ -646,6 +728,21 @@ const dialogTerminalRef = ref();
 const onTerminal = (row: any) => {
     const title = i18n.global.t('menu.container') + ' ' + row.name;
     dialogTerminalRef.value!.acceptParams({ containerID: row.containerID, title: title });
+};
+const dialogFileBrowserRef = ref();
+const onOpenFileBrowser = async (row: any) => {
+    const title = i18n.global.t('menu.container') + ' ' + row.name;
+    let workingDir = '/';
+    try {
+        const res = await inspect({ id: row.containerID, type: 'container', detail: '' });
+        const data = typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
+        if (data?.Config?.WorkingDir) {
+            workingDir = data.Config.WorkingDir;
+        }
+    } catch (e) {
+        /* fallback to root */
+    }
+    dialogFileBrowserRef.value!.acceptParams({ containerID: row.containerID, title: title, workingDir: workingDir });
 };
 
 const onInspect = async (row: any) => {
@@ -742,7 +839,7 @@ const buttons = [
     {
         label: i18n.global.t('menu.terminal'),
         disabled: (row: Container.ContainerInfo) => {
-            return row.state !== 'running';
+            return row.state !== 'running' || !isAdminOrNodeAdmin.value;
         },
         click: (row: Container.ContainerInfo) => {
             onTerminal(row);
@@ -755,15 +852,34 @@ const buttons = [
         },
     },
     {
+        label: i18n.global.t('home.dir'),
+        permission: true,
+        disabled: (row: Container.ContainerInfo) => {
+            return row.state !== 'running';
+        },
+        click: (row: Container.ContainerInfo) => {
+            onOpenFileBrowser(row);
+        },
+    },
+    {
         label: i18n.global.t('commons.button.edit'),
+        permission: true,
         click: (row: Container.ContainerInfo) => {
             onContainerOperate(row.name);
         },
     },
     {
         label: i18n.global.t('commons.button.upgrade'),
+        permission: true,
         click: (row: Container.ContainerInfo) => {
             dialogUpgradeRef.value!.acceptParams({ container: row.name, image: row.imageName, fromApp: row.isFromApp });
+        },
+    },
+    {
+        label: i18n.global.t('commons.button.backup'),
+        permission: true,
+        click: (row: Container.ContainerInfo) => {
+            onBackup(row);
         },
     },
     {
@@ -777,6 +893,7 @@ const buttons = [
     },
     {
         label: i18n.global.t('container.rename'),
+        permission: true,
         click: (row: Container.ContainerInfo) => {
             dialogRenameRef.value!.acceptParams({ container: row.name });
         },
@@ -786,6 +903,7 @@ const buttons = [
     },
     {
         label: i18n.global.t('container.makeImage'),
+        permission: true,
         click: (row: Container.ContainerInfo) => {
             dialogCommitRef.value!.acceptParams({ containerID: row.containerID, containerName: row.name });
         },
@@ -795,6 +913,7 @@ const buttons = [
     },
     {
         label: i18n.global.t('commons.button.delete'),
+        permission: true,
         click: (row: Container.ContainerInfo) => {
             onOperate('remove', row);
         },

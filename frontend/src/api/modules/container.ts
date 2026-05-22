@@ -15,6 +15,30 @@ export const listContainerByImage = (image: string) => {
 export const loadContainerUsers = (name: string) => {
     return http.post<Array<string>>(`/containers/users`, { name: name });
 };
+export const listContainerFiles = (params: Container.ContainerFileReq) => {
+    return http.post<Array<Container.ContainerFileInfo>>(`/containers/files/search`, params, TimeoutEnum.T_40S);
+};
+export const uploadContainerFile = (params: FormData) => {
+    return http.upload(`/containers/files/upload`, params, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: TimeoutEnum.T_5M,
+    });
+};
+export const getContainerFileContent = (params: Container.ContainerFileReq) => {
+    return http.post<Container.ContainerFileContent>(`/containers/files/content`, params, TimeoutEnum.T_40S);
+};
+export const getContainerFileSize = (params: Container.ContainerFileReq) => {
+    return http.post<number>(`/containers/files/size`, params, TimeoutEnum.T_40S);
+};
+export const deleteContainerFile = (params: { containerID: string; paths: string[] }) => {
+    return http.post(`/containers/files/del`, params, TimeoutEnum.T_40S);
+};
+export const downloadContainerFile = (params: { containerID: string; path: string }) => {
+    return http.download<BlobPart>(`/containers/files/download`, params, {
+        responseType: 'blob',
+        timeout: TimeoutEnum.T_40S,
+    });
+};
 export const loadContainerStatus = () => {
     return http.get<Container.ContainerStatus>(`/containers/status`);
 };
@@ -23,9 +47,6 @@ export const loadResourceLimit = () => {
 };
 export const createContainer = (params: Container.ContainerHelper) => {
     return http.post(`/containers`, params, TimeoutEnum.T_10M);
-};
-export const createContainerByCommand = (command: string, taskID: string) => {
-    return http.post(`/containers/command`, { command: command, taskID: taskID });
 };
 export const updateContainer = (params: Container.ContainerHelper) => {
     return http.post(`/containers/update`, params, TimeoutEnum.T_10M);
@@ -76,7 +97,7 @@ export const inspect = (params: Container.ContainerInspect) => {
 export const DownloadFile = (params: Container.ContainerLogInfo) => {
     return http.download<BlobPart>('/containers/download/log', params, {
         responseType: 'blob',
-        timeout: TimeoutEnum.T_40S,
+        timeout: TimeoutEnum.T_60S,
     });
 };
 
@@ -156,7 +177,7 @@ export const createImageRepo = (params: Container.RepoCreate) => {
 export const updateImageRepo = (params: Container.RepoUpdate) => {
     return http.post(`/containers/repo/update`, params, TimeoutEnum.T_40S);
 };
-export const deleteImageRepo = (id: Number) => {
+export const deleteImageRepo = (id: number) => {
     return http.post(`/containers/repo/del`, { id: id }, TimeoutEnum.T_40S);
 };
 

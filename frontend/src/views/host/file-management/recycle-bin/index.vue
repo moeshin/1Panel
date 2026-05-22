@@ -2,17 +2,23 @@
     <DrawerPro v-model="open" :header="$t('file.recycleBin')" @close="handleClose" size="large">
         <template #content>
             <div class="flex space-x-4">
-                <el-button @click="clear" type="primary" :disabled="data == null || data.length == 0">
+                <el-button v-permission @click="clear" type="primary" :disabled="data == null || data.length == 0">
                     {{ $t('file.clearRecycleBin') }}
                 </el-button>
-                <el-button @click="patchDelete" :disabled="data == null || selects.length == 0">
+                <el-button v-permission @click="patchDelete" :disabled="data == null || selects.length == 0">
                     {{ $t('commons.button.delete') }}
                 </el-button>
-                <el-button @click="patchReduce" :disabled="data == null || selects.length == 0">
+                <el-button v-permission @click="patchReduce" :disabled="data == null || selects.length == 0">
                     {{ $t('file.reduce') }}
                 </el-button>
                 <el-form-item :label="$t('file.fileRecycleBin')">
-                    <el-switch v-model="status" active-value="Enable" inactive-value="Disable" @change="changeStatus" />
+                    <el-switch
+                        v-permission
+                        v-model="status"
+                        active-value="Enable"
+                        inactive-value="Disable"
+                        @change="changeStatus"
+                    />
                 </el-form-item>
             </div>
             <ComplexTable
@@ -61,7 +67,8 @@
 <script lang="ts" setup>
 import { getRecycleStatus, clearRecycle, getRecycleList, reduceFile } from '@/api/modules/files';
 import { reactive, ref } from 'vue';
-import { dateFormat, computeSize } from '@/utils/util';
+import { dateFormat } from '@/utils/date';
+import { computeSize } from '@/utils/size';
 import i18n from '@/lang';
 import Delete from './delete/index.vue';
 import Reduce from './reduce/index.vue';
@@ -180,10 +187,12 @@ const clear = async () => {
 const buttons = [
     {
         label: i18n.global.t('file.reduce'),
+        permission: true,
         click: rdFile,
     },
     {
         label: i18n.global.t('commons.button.delete'),
+        permission: true,
         click: singleDel,
     },
 ];

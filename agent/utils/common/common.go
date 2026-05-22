@@ -4,7 +4,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io"
-	mathRand "math/rand"
+	"math/big"
 	"net"
 	"os/exec"
 	"reflect"
@@ -18,6 +18,7 @@ import (
 
 	"github.com/1Panel-dev/1Panel/agent/buserr"
 	"github.com/1Panel-dev/1Panel/agent/utils/cmd"
+	"github.com/1Panel-dev/1Panel/agent/utils/ctl_conf"
 	"github.com/1Panel-dev/1Panel/agent/utils/re"
 	"golang.org/x/net/idna"
 )
@@ -135,13 +136,6 @@ func isDigit(r rune) bool {
 	return r >= '0' && r <= '9'
 }
 
-func max(x, y int) int {
-	if x > y {
-		return x
-	}
-	return y
-}
-
 func GetSortedVersions(versions []string) []string {
 	sort.Slice(versions, func(i, j int) bool {
 		return CompareVersion(versions[i], versions[j])
@@ -169,21 +163,29 @@ var letters = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ123456
 
 func RandStr(n int) string {
 	b := make([]rune, n)
+	max := big.NewInt(int64(len(letters)))
 	for i := range b {
-		b[i] = letters[mathRand.Intn(len(letters))]
+		num, err := rand.Int(rand.Reader, max)
+		if err != nil {
+			return ""
+		}
+		b[i] = letters[num.Int64()]
 	}
 	return string(b)
 }
 
 func RandStrAndNum(n int) string {
-	source := mathRand.NewSource(time.Now().UnixNano())
-	randGen := mathRand.New(source)
 	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
 	b := make([]byte, n)
+	max := big.NewInt(int64(len(charset)))
 	for i := range b {
-		b[i] = charset[randGen.Intn(len(charset)-1)]
+		num, err := rand.Int(rand.Reader, max)
+		if err != nil {
+			return ""
+		}
+		b[i] = charset[num.Int64()]
 	}
-	return (string(b))
+	return string(b)
 }
 
 func ScanPort(port int) bool {
@@ -191,7 +193,7 @@ func ScanPort(port int) bool {
 	if err != nil {
 		return true
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	return false
 }
 
@@ -200,7 +202,7 @@ func ScanUDPPort(port int) bool {
 	if err != nil {
 		return true
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	return false
 }
 
@@ -225,7 +227,7 @@ func ScanPortWithIP(ip string, port int) bool {
 		}
 		return false
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	return true
 }
 
@@ -288,18 +290,21 @@ func LoadTimeZoneByCmd() string {
 	if _, err := time.LoadLocation(loc); err != nil {
 		loc = "Asia/Shanghai"
 	}
-	std, err := cmd.RunDefaultWithStdoutBashC("timedatectl | grep 'Time zone'")
+	std, err := cmd.NewCommandMgr(cmd.WithTimeout(20 * time.Second)).RunWithStdout("timedatectl")
 	if err != nil {
 		return loc
 	}
-	fields := strings.Fields(string(std))
-	if len(fields) != 5 {
-		return loc
+	for _, line := range strings.Split(std, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 5 || fields[0] != "Time" || fields[1] != "zone:" {
+			continue
+		}
+		if _, err := time.LoadLocation(fields[2]); err != nil {
+			return loc
+		}
+		return fields[2]
 	}
-	if _, err := time.LoadLocation(fields[2]); err != nil {
-		return loc
-	}
-	return fields[2]
+	return loc
 }
 
 func IsValidDomain(domain string) bool {
@@ -343,6 +348,26 @@ func SplitStr(str string, spi ...string) []string {
 
 func IsValidIP(ip string) bool {
 	return net.ParseIP(ip) != nil
+}
+
+// ParseIPLoose parses an IP address, accepting bracketed IPv6 forms
+// such as "[::1]" or "[fe80::1%eth0]" in addition to the bare forms
+// that net.ParseIP supports natively. It also trims surrounding
+// whitespace. Returns nil for non-IP input, matching net.ParseIP.
+//
+// This is required because some flows pass the host portion of a URL
+// (e.g. "[::1]") rather than a bare IP address. Rejecting that form
+// caused 1Panel-dev/1Panel#12646 — the panel SSL self-sign workflow
+// reported “domain format invalid” for IPv6 hosts.
+func ParseIPLoose(s string) net.IP {
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" {
+		return nil
+	}
+	if len(trimmed) >= 2 && trimmed[0] == '[' && trimmed[len(trimmed)-1] == ']' {
+		trimmed = trimmed[1 : len(trimmed)-1]
+	}
+	return net.ParseIP(trimmed)
 }
 
 const (
@@ -418,4 +443,11 @@ func GetDockerComposeCommand() string {
 		return "docker-compose"
 	}
 	return ""
+}
+
+func LoadParams(param string) string {
+	return ctl_conf.Load(param)
+}
+func LoadParamsWithoutPanic(param string) string {
+	return ctl_conf.LoadWithoutPanic(param)
 }

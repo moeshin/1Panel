@@ -1,7 +1,7 @@
 <template>
     <DrawerPro
         v-model="open"
-        :header="$t('runtime.' + mode)"
+        :header="$t('commons.button.' + mode)"
         size="large"
         :resource="mode === 'edit' ? runtime.name : ''"
         @close="handleClose"
@@ -35,7 +35,7 @@
         <template #footer>
             <span>
                 <el-button @click="handleClose" :disabled="loading">{{ $t('commons.button.cancel') }}</el-button>
-                <el-button type="primary" @click="submit(runtimeForm)" :disabled="loading">
+                <el-button v-permission type="primary" @click="submit(runtimeForm)" :disabled="loading">
                     {{ $t('commons.button.confirm') }}
                 </el-button>
             </span>

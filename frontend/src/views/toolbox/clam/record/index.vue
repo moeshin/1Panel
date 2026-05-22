@@ -30,11 +30,11 @@
                         </el-tag>
 
                         <span class="mt-0.5">
-                            <el-button type="primary" @click="onHandle(dialogData.rowData)" link>
+                            <el-button type="primary" v-permission @click="onHandle(dialogData.rowData)" link>
                                 {{ $t('commons.button.handle') }}
                             </el-button>
                             <el-divider direction="vertical" />
-                            <el-button :disabled="!hasRecords" type="primary" @click="onClean" link>
+                            <el-button v-permission :disabled="!hasRecords" type="primary" @click="onClean" link>
                                 {{ $t('commons.button.clean') }}
                             </el-button>
                         </span>
@@ -185,7 +185,7 @@ import i18n from '@/lang';
 import { ElMessageBox } from 'element-plus';
 import { MsgSuccess } from '@/utils/message';
 import { shortcuts } from '@/utils/shortcuts';
-import { dateFormat, dateFormatForName } from '@/utils/util';
+import { dateFormat, dateFormatForName } from '@/utils/date';
 import { Toolbox } from '@/api/interface/toolbox';
 import LogFile from '@/components/log/file/index.vue';
 import { cleanClamRecord, handleClamScan, searchClamRecord } from '@/api/modules/toolbox';

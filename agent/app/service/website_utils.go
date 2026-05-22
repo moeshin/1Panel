@@ -47,6 +47,82 @@ func handleChineseDomain(domain string) (string, error) {
 	return domain, nil
 }
 
+func isHTTPSProxyPass(proxyPass string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(proxyPass)), "https://")
+}
+
+func normalizeProxyPass(proxyPass string) string {
+	proxyPass = strings.TrimSpace(proxyPass)
+	if proxyPass == "" {
+		return ""
+	}
+	if strings.Contains(proxyPass, "://") || strings.HasPrefix(proxyPass, "unix:") {
+		return proxyPass
+	}
+	return fmt.Sprintf("http://%s", proxyPass)
+}
+
+func getAppInstallProxyPass(appInstall *model.AppInstall) (string, error) {
+	if appInstall == nil {
+		return "", errors.New("app install is nil")
+	}
+	if appInstall.HttpPort > 0 {
+		return fmt.Sprintf("http://127.0.0.1:%d", appInstall.HttpPort), nil
+	}
+	if appInstall.HttpsPort > 0 {
+		return fmt.Sprintf("https://127.0.0.1:%d", appInstall.HttpsPort), nil
+	}
+	return "", fmt.Errorf("app %s has no available http or https port", appInstall.Name)
+}
+
+func getAppInstallProxyPassOrEmpty(appInstall *model.AppInstall) string {
+	proxyPass, err := getAppInstallProxyPass(appInstall)
+	if err != nil {
+		return ""
+	}
+	return proxyPass
+}
+
+func hasAppInstallProxyPassChanged(before *model.AppInstall, after *model.AppInstall) bool {
+	return getAppInstallProxyPassOrEmpty(before) != getAppInstallProxyPassOrEmpty(after)
+}
+
+func getRootProxyDirectives(proxyPass string) []components.IDirective {
+	server := &components.Server{}
+	server.UpdateRootProxy([]string{normalizeProxyPass(proxyPass)})
+
+	locations := server.FindDirectives("location")
+	if len(locations) == 0 || locations[0].GetBlock() == nil {
+		return nil
+	}
+
+	return append([]components.IDirective(nil), locations[0].GetBlock().GetDirectives()...)
+}
+
+func getWebsiteRedirectInclude(website model.Website) string {
+	return fmt.Sprintf("/www/sites/%s/redirect/*.conf", website.Alias)
+}
+
+func applyLocationProxyPass(location *components.Location, proxyPass string, sni *bool, proxySSLName string) {
+	location.UpdateDirective("proxy_pass", []string{proxyPass})
+
+	enableSNI := isHTTPSProxyPass(proxyPass)
+	if sni != nil {
+		enableSNI = enableSNI && *sni
+	}
+	if enableSNI {
+		location.UpdateDirective("proxy_ssl_server_name", []string{"on"})
+	} else {
+		location.UpdateDirective("proxy_ssl_server_name", []string{"off"})
+	}
+
+	sslName := "$proxy_host"
+	if proxySSLName != "" {
+		sslName = proxySSLName
+	}
+	location.UpdateDirective("proxy_ssl_name", []string{sslName})
+}
+
 func createIndexFile(website *model.Website, runtime *model.Runtime) error {
 	var (
 		indexPath      string
@@ -122,7 +198,7 @@ func createProxyFile(website *model.Website) error {
 		return errors.New("error")
 	}
 	location.ChangePath("^~", "/")
-	location.UpdateDirective("proxy_pass", []string{website.Proxy})
+	applyLocationProxyPass(location, website.Proxy, nil, "")
 	location.UpdateDirective("proxy_set_header", []string{"Host", "$host"})
 	if err := nginx.WriteConfig(config, nginx.IndentedStyle); err != nil {
 		return buserr.WithErr("ErrUpdateBuWebsite", err)
@@ -257,7 +333,10 @@ func configDefaultNginx(website *model.Website, domains []model.WebsiteDomain, a
 		rootIndex := path.Join("/www/sites", website.Alias, "index")
 		switch website.Type {
 		case constant.Deployment:
-			proxy := fmt.Sprintf("http://127.0.0.1:%d", appInstall.HttpPort)
+			proxy, err := getAppInstallProxyPass(appInstall)
+			if err != nil {
+				return err
+			}
 			server.UpdateRootProxy([]string{proxy})
 		case constant.Static:
 			server.UpdateRoot(rootIndex)
@@ -279,7 +358,7 @@ func configDefaultNginx(website *model.Website, domains []model.WebsiteDomain, a
 					server.UpdatePHPProxy([]string{website.Proxy}, "")
 				}
 			case constant.RuntimeNode, constant.RuntimeJava, constant.RuntimeGo, constant.RuntimePython, constant.RuntimeDotNet:
-				server.UpdateRootProxy([]string{fmt.Sprintf("http://%s", website.Proxy)})
+				server.UpdateRootProxy([]string{normalizeProxyPass(website.Proxy)})
 			}
 		case constant.Subsite:
 			parentWebsite, err := websiteRepo.GetFirst(repo.WithByID(website.ParentWebsiteID))
@@ -497,7 +576,7 @@ func delNginxConfig(website model.Website, force bool) error {
 	}
 	sitePath := GetSiteDir(website.Alias)
 	if fileOp.Stat(sitePath) {
-		xpack.RemoveTamper(website.Alias)
+		xpack.MultiNodeProvider.RemoveTamper(website.Alias)
 		_ = fileOp.DeleteDir(sitePath)
 	}
 
@@ -977,7 +1056,7 @@ func opWebsite(website *model.Website, operate string) error {
 		server.RemoveDirective("include", []string{proxyInclude})
 		rewriteInclude := fmt.Sprintf("/www/sites/%s/rewrite/%s.conf", website.Alias, website.Alias)
 		server.RemoveDirective("include", []string{rewriteInclude})
-		redirectInclude := fmt.Sprintf("/www/sites/%s/redirect/%s.conf", website.Alias, website.Alias)
+		redirectInclude := getWebsiteRedirectInclude(*website)
 		server.RemoveDirective("include", []string{redirectInclude})
 
 		switch website.Type {
@@ -1009,7 +1088,7 @@ func opWebsite(website *model.Website, operate string) error {
 		if fileOp.Stat(absoluteRewritePath) {
 			server.UpdateDirective("include", []string{rewriteInclude})
 		}
-		redirectInclude := fmt.Sprintf("/www/sites/%s/redirect/%s.conf", website.Alias, website.Alias)
+		redirectInclude := getWebsiteRedirectInclude(*website)
 		absoluteRedirectPath := GetSitePath(*website, SiteRedirectDir)
 		if fileOp.Stat(absoluteRedirectPath) {
 			server.UpdateDirective("include", []string{redirectInclude})
@@ -1025,7 +1104,10 @@ func opWebsite(website *model.Website, operate string) error {
 			if err != nil {
 				return err
 			}
-			proxy := fmt.Sprintf("http://127.0.0.1:%d", appInstall.HttpPort)
+			proxy, err := getAppInstallProxyPass(&appInstall)
+			if err != nil {
+				return err
+			}
 			server.UpdateRootProxy([]string{proxy})
 		case constant.Static:
 			server.UpdateRoot(rootIndex)
@@ -1045,8 +1127,33 @@ func opWebsite(website *model.Website, operate string) error {
 				}
 				server.UpdatePHPProxy([]string{website.Proxy}, localPath)
 			} else {
-				proxy := fmt.Sprintf("http://%s", website.Proxy)
+				proxy := normalizeProxyPass(website.Proxy)
 				server.UpdateRootProxy([]string{proxy})
+			}
+		case constant.Subsite:
+			parentWebsite, err := websiteRepo.GetFirst(repo.WithByID(website.ParentWebsiteID))
+			if err != nil {
+				return err
+			}
+			website.Proxy = parentWebsite.Proxy
+			rootIndex = path.Join("/www/sites", parentWebsite.Alias, "index", website.SiteDir)
+			if parentWebsite.Type == constant.Runtime {
+				parentRuntime, err := runtimeRepo.GetFirst(context.Background(), repo.WithByID(parentWebsite.RuntimeID))
+				if err != nil {
+					return err
+				}
+				website.RuntimeID = parentRuntime.ID
+				if parentRuntime.Type == constant.RuntimePHP {
+					server.UpdateRoot(rootIndex)
+					localPath := ""
+					if parentRuntime.Resource == constant.ResourceLocal {
+						localPath = path.Join(rootIndex, "index.php")
+					}
+					server.UpdatePHPProxy([]string{website.Proxy}, localPath)
+				}
+			}
+			if parentWebsite.Type == constant.Static {
+				server.UpdateRoot(rootIndex)
 			}
 		}
 		website.Status = constant.WebRunning
@@ -1114,7 +1221,7 @@ func checkIsLinkApp(website model.Website) bool {
 
 func chownRootDir(path string) error {
 	cmdMgr := cmd.NewCommandMgr(cmd.WithTimeout(1 * time.Second))
-	if err := cmdMgr.RunBashCf(`chown -R 1000:1000 "%s"`, path); err != nil {
+	if err := cmdMgr.Run("chown", "-R", "1000:1000", path); err != nil {
 		return err
 	}
 	return nil

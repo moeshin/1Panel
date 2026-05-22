@@ -5,7 +5,7 @@
                 <el-form
                     :model="form"
                     v-loading="loading"
-                    :label-position="mobile ? 'top' : 'left'"
+                    :label-position="isMobile ? 'top' : 'left'"
                     label-width="150px"
                 >
                     <el-row>
@@ -123,24 +123,6 @@
                                     </div>
                                 </div>
                             </el-form-item>
-
-                            <el-form-item :label="$t('setting.expirationTime')" prop="expirationTime">
-                                <el-input disabled v-model="form.expirationTime">
-                                    <template #append>
-                                        <el-button @click="onChangeExpirationTime" icon="Setting">
-                                            {{ $t('commons.button.set') }}
-                                        </el-button>
-                                    </template>
-                                </el-input>
-                                <div>
-                                    <span class="input-help" v-if="form.expirationTime !== $t('setting.unSetting')">
-                                        {{ $t('setting.timeoutHelper', [loadTimeOut()]) }}
-                                    </span>
-                                    <span class="input-help" v-else>
-                                        {{ $t('setting.noneSetting') }}
-                                    </span>
-                                </div>
-                            </el-form-item>
                             <el-form-item :label="$t('setting.complexity')" prop="complexityVerification">
                                 <el-switch
                                     @change="onSaveComplexity"
@@ -152,30 +134,6 @@
                                     {{ $t('setting.complexityHelper') }}
                                 </span>
                             </el-form-item>
-
-                            <el-form-item :label="$t('setting.mfa')">
-                                <el-switch
-                                    @change="handleMFA"
-                                    v-model="form.mfaStatus"
-                                    active-value="Enable"
-                                    inactive-value="Disable"
-                                />
-                                <span class="input-help">
-                                    {{ $t('setting.mfaHelper') }}
-                                </span>
-                            </el-form-item>
-
-                            <el-form-item :label="$t('setting.passkey')">
-                                <el-button
-                                    @click="openPasskeyDialog"
-                                    :disabled="!passkeySupported || form.ssl === 'Disable'"
-                                >
-                                    {{ $t('setting.passkeyManage') }}
-                                </el-button>
-                                <span class="input-help">
-                                    {{ passkeyHint }}
-                                </span>
-                            </el-form-item>
                         </el-col>
                     </el-row>
                 </el-form>
@@ -184,84 +142,36 @@
 
         <PortSetting ref="portRef" />
         <BindSetting ref="bindRef" />
-        <MfaSetting ref="mfaRef" @search="search" />
         <SSLSetting ref="sslRef" @search="search" />
         <EntranceSetting ref="entranceRef" @search="search" />
-        <TimeoutSetting ref="timeoutRef" @search="search" />
         <DomainSetting ref="domainRef" @search="search" />
         <AllowIPsSetting ref="allowIPsRef" @search="search" />
         <ResponseSetting ref="responseRef" @search="search()" />
-
-        <el-dialog v-model="passkeyDialogVisible" :title="$t('setting.passkey')" width="600px">
-            <div class="mb-4">
-                <el-form label-position="top">
-                    <el-form-item :label="$t('setting.passkeyName')">
-                        <el-input v-model.trim="passkeyForm.name" :placeholder="$t('setting.passkeyNameHelper')" />
-                    </el-form-item>
-                    <div class="flex items-center">
-                        <el-button type="primary" @click="registerPasskey" :disabled="!canRegisterPasskey">
-                            {{ $t('setting.passkeyAdd') }}
-                        </el-button>
-                        <span class="text-xs text-gray-500 ml-3">{{ passkeyCountText }}</span>
-                    </div>
-                </el-form>
-            </div>
-            <el-table :data="passkeyList" v-loading="passkeyLoading">
-                <el-table-column prop="name" :label="$t('setting.passkeyName')" min-width="120" />
-                <el-table-column prop="createdAt" :label="$t('setting.passkeyCreatedAt')" min-width="160" />
-                <el-table-column :label="$t('setting.passkeyLastUsedAt')" min-width="160">
-                    <template #default="scope">
-                        <span>{{ scope.row.lastUsedAt || '-' }}</span>
-                    </template>
-                </el-table-column>
-                <el-table-column :label="$t('commons.table.operate')" width="120">
-                    <template #default="scope">
-                        <el-button link type="danger" @click="removePasskey(scope.row.id)">
-                            {{ $t('commons.button.delete') }}
-                        </el-button>
-                    </template>
-                </el-table-column>
-            </el-table>
-        </el-dialog>
     </div>
 </template>
 
 <script lang="ts" setup>
-import { ref, reactive, onMounted, computed } from 'vue';
+import { ref, reactive, onMounted } from 'vue';
 import { ElForm, ElMessageBox } from 'element-plus';
 import PortSetting from '@/views/setting/safe/port/index.vue';
 import BindSetting from '@/views/setting/safe/bind/index.vue';
 import ResponseSetting from '@/views/setting/safe/response/index.vue';
 import SSLSetting from '@/views/setting/safe/ssl/index.vue';
-import MfaSetting from '@/views/setting/safe/mfa/index.vue';
-import TimeoutSetting from '@/views/setting/safe/timeout/index.vue';
 import EntranceSetting from '@/views/setting/safe/entrance/index.vue';
 import DomainSetting from '@/views/setting/safe/domain/index.vue';
 import AllowIPsSetting from '@/views/setting/safe/allowips/index.vue';
-import {
-    updateSetting,
-    getSettingInfo,
-    getSystemAvailable,
-    updateSSL,
-    loadSSLInfo,
-    passkeyRegisterBegin,
-    passkeyRegisterFinish,
-    passkeyList as fetchPasskeyList,
-    passkeyDelete,
-} from '@/api/modules/setting';
+import { updateSetting, getSettingInfo, getSystemAvailable, updateSSL, loadSSLInfo } from '@/api/modules/setting';
 import i18n from '@/lang';
-import { MsgError, MsgSuccess } from '@/utils/message';
+import { MsgSuccess } from '@/utils/message';
 import { Setting } from '@/api/interface/setting';
-import { GlobalStore } from '@/store';
-import { base64UrlToBuffer, bufferToBase64Url } from '@/utils/util';
-const globalStore = GlobalStore();
+import { useGlobalStore } from '@/composables/useGlobalStore';
+
+const { entrance, isLogin, isMobile } = useGlobalStore();
 
 const loading = ref(false);
 const entranceRef = ref();
 const portRef = ref();
 const bindRef = ref();
-const timeoutRef = ref();
-const mfaRef = ref();
 const responseRef = ref();
 
 const sslRef = ref();
@@ -269,9 +179,6 @@ const lastSSL = ref('Disable');
 const sslInfo = ref<Setting.SSLInfo>();
 const domainRef = ref();
 const allowIPsRef = ref();
-const mobile = computed(() => {
-    return globalStore.isMobile();
-});
 
 const form = reactive({
     serverPort: 9999,
@@ -281,42 +188,11 @@ const form = reactive({
     sslItem: 'Disable',
     sslType: 'self',
     securityEntrance: '',
-    expirationDays: 0,
-    expirationTime: '',
     complexityVerification: 'Disable',
-    mfaStatus: 'Disable',
-    mfaInterval: 30,
     allowIPs: '',
     bindDomain: '',
     noAuthSetting: '200 - ' + i18n.global.t('setting.help200'),
     noAuthSettingValue: '200',
-});
-
-const passkeyDialogVisible = ref(false);
-const passkeyLoading = ref(false);
-const passkeyList = ref<Setting.PasskeyInfo[]>([]);
-const passkeyForm = reactive({ name: '' });
-const passkeySupported = ref(false);
-const passkeyMaxCount = 5;
-const passkeyHint = computed(() => {
-    if (form.ssl === 'Disable') {
-        return i18n.global.t('setting.passkeyRequireSSL');
-    }
-    if (!passkeySupported.value) {
-        return i18n.global.t('setting.passkeyNotSupported');
-    }
-    return i18n.global.t('setting.passkeyHelper');
-});
-const passkeyCountText = computed(() => {
-    return i18n.global.t('setting.passkeyCount', [passkeyList.value.length, passkeyMaxCount]);
-});
-const canRegisterPasskey = computed(() => {
-    return (
-        form.ssl !== 'Disable' &&
-        passkeySupported.value &&
-        passkeyList.value.length < passkeyMaxCount &&
-        passkeyForm.name.trim().length > 0
-    );
 });
 
 const unset = ref(i18n.global.t('setting.unSetting'));
@@ -334,16 +210,9 @@ const search = async () => {
         loadInfo();
     }
     form.securityEntrance = res.data.securityEntrance;
-    form.expirationDays = Number(res.data.expirationDays);
-    form.expirationTime = res.data.expirationTime;
     form.complexityVerification = res.data.complexityVerification;
-    form.mfaStatus = res.data.mfaStatus;
-    form.mfaInterval = Number(res.data.mfaInterval);
     form.allowIPs = res.data.allowIPs.replaceAll(',', '\n');
     form.bindDomain = res.data.bindDomain;
-    if (res.data.bindDomain === '') {
-        passkeySupported.value = false;
-    }
     form.noAuthSettingValue = res.data.noAuthSetting;
     if (res.data.noAuthSetting !== '200') {
         form.noAuthSetting = res.data.noAuthSetting + ' - ' + i18n.global.t('setting.error' + res.data.noAuthSetting);
@@ -367,135 +236,6 @@ const onSaveComplexity = async () => {
         .catch(() => {
             loading.value = false;
         });
-};
-
-const handleMFA = async () => {
-    if (form.mfaStatus === 'Enable') {
-        mfaRef.value.acceptParams({ interval: form.mfaInterval });
-        return;
-    }
-    ElMessageBox.confirm(i18n.global.t('setting.mfaClose'), i18n.global.t('setting.mfa'), {
-        confirmButtonText: i18n.global.t('commons.button.confirm'),
-        cancelButtonText: i18n.global.t('commons.button.cancel'),
-    })
-        .then(async () => {
-            loading.value = true;
-            await updateSetting({ key: 'MFAStatus', value: 'Disable' })
-                .then(() => {
-                    loading.value = false;
-                    search();
-                    MsgSuccess(i18n.global.t('commons.msg.operationSuccess'));
-                })
-                .catch(() => {
-                    loading.value = false;
-                    search();
-                });
-        })
-        .catch(() => {
-            search();
-        });
-};
-
-const openPasskeyDialog = async () => {
-    passkeyDialogVisible.value = true;
-    await loadPasskeys();
-};
-
-const loadPasskeys = async () => {
-    passkeyLoading.value = true;
-    try {
-        const res = await fetchPasskeyList();
-        passkeyList.value = res.data || [];
-    } catch (error) {
-        passkeyList.value = [];
-    } finally {
-        passkeyLoading.value = false;
-    }
-};
-
-const registerPasskey = async () => {
-    if (form.ssl === 'Disable') {
-        MsgError(i18n.global.t('setting.passkeyRequireSSL'));
-        return;
-    }
-    if (!passkeySupported.value) {
-        MsgError(i18n.global.t('setting.passkeyNotSupported'));
-        return;
-    }
-    if (passkeyList.value.length >= passkeyMaxCount) {
-        MsgError(i18n.global.t('setting.passkeyLimit'));
-        return;
-    }
-    if (!passkeyForm.name.trim()) {
-        MsgError(i18n.global.t('commons.rule.requiredInput'));
-        return;
-    }
-    passkeyLoading.value = true;
-    try {
-        const res = await passkeyRegisterBegin({ name: passkeyForm.name.trim() });
-        const publicKey = normalizePasskeyCreation(res.data.publicKey);
-        const credential = (await navigator.credentials.create({ publicKey })) as PublicKeyCredential | null;
-        if (!credential) {
-            MsgError(i18n.global.t('setting.passkeyFailed'));
-            return;
-        }
-        const payload = buildPasskeyAttestation(credential);
-        await passkeyRegisterFinish(payload, res.data.sessionId);
-        MsgSuccess(i18n.global.t('commons.msg.operationSuccess'));
-        passkeyForm.name = '';
-        await loadPasskeys();
-    } catch (res: any) {
-        if (res?.message) {
-            console.log(res.message);
-            MsgError(i18n.global.t('setting.passkeyFailed'));
-        }
-    } finally {
-        passkeyLoading.value = false;
-    }
-};
-
-const removePasskey = async (id: string) => {
-    ElMessageBox.confirm(i18n.global.t('setting.passkeyDeleteConfirm'), i18n.global.t('setting.passkey'), {
-        confirmButtonText: i18n.global.t('commons.button.confirm'),
-        cancelButtonText: i18n.global.t('commons.button.cancel'),
-    })
-        .then(async () => {
-            passkeyLoading.value = true;
-            await passkeyDelete(id);
-            MsgSuccess(i18n.global.t('commons.msg.operationSuccess'));
-            await loadPasskeys();
-        })
-        .catch(() => {})
-        .finally(() => {
-            passkeyLoading.value = false;
-        });
-};
-
-const normalizePasskeyCreation = (publicKey: Record<string, any>): PublicKeyCredentialCreationOptions => {
-    const request = { ...publicKey };
-    request.challenge = base64UrlToBuffer(request.challenge);
-    request.user = { ...request.user, id: base64UrlToBuffer(request.user.id) };
-    if (request.excludeCredentials && Array.isArray(request.excludeCredentials)) {
-        request.excludeCredentials = request.excludeCredentials.map((item) => {
-            return { ...item, id: base64UrlToBuffer(item.id) };
-        });
-    }
-    return request as PublicKeyCredentialCreationOptions;
-};
-
-const buildPasskeyAttestation = (credential: PublicKeyCredential) => {
-    const response = credential.response as AuthenticatorAttestationResponse;
-    return {
-        id: credential.id,
-        rawId: bufferToBase64Url(credential.rawId),
-        type: credential.type,
-        response: {
-            clientDataJSON: bufferToBase64Url(response.clientDataJSON),
-            attestationObject: bufferToBase64Url(response.attestationObject),
-        },
-        clientExtensionResults: credential.getClientExtensionResults(),
-        authenticatorAttachment: credential.authenticatorAttachment,
-    };
 };
 
 const onChangeEntrance = () => {
@@ -536,10 +276,10 @@ const handleSSL = async () => {
             MsgSuccess(i18n.global.t('commons.msg.operationSuccess'));
             lastSSL.value = 'Disable';
             let href = window.location.href;
-            globalStore.isLogin = false;
+            isLogin.value = false;
             let address = href.split('://')[1];
-            if (globalStore.entrance) {
-                address = address.replaceAll('settings/safe', globalStore.entrance);
+            if (entrance.value) {
+                address = address.replaceAll('settings/safe', entrance.value);
             } else {
                 address = address.replaceAll('settings/safe', 'login');
             }
@@ -559,25 +299,7 @@ const loadInfo = async () => {
     });
 };
 
-const onChangeExpirationTime = async () => {
-    timeoutRef.value.acceptParams({ expirationDays: form.expirationDays });
-};
-
-function loadTimeOut() {
-    if (form.expirationDays === 0) {
-        form.expirationTime = i18n.global.t('setting.unSetting');
-        return i18n.global.t('setting.unSetting');
-    }
-    let staytimeGap = new Date(form.expirationTime).getTime() - new Date().getTime();
-    if (staytimeGap < 0) {
-        form.expirationTime = i18n.global.t('setting.unSetting');
-        return i18n.global.t('setting.unSetting');
-    }
-    return Math.floor(staytimeGap / (3600 * 1000 * 24));
-}
-
 onMounted(() => {
-    passkeySupported.value = !!window.PublicKeyCredential && window.isSecureContext;
     search();
     getSystemAvailable();
 });

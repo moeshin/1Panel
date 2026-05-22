@@ -135,6 +135,7 @@ func (u *ContainerService) PageCompose(req dto.SearchWithPage) (int64, interface
 
 	for key, value := range mergedMap {
 		value.Name = key
+		value.ComposeFileExists = composeFileExists(value.Workdir, value.ConfigFile)
 		records = append(records, value)
 	}
 	if len(req.Info) != 0 {
@@ -162,6 +163,29 @@ func (u *ContainerService) PageCompose(req dto.SearchWithPage) (int64, interface
 	}
 	listItem := loadEnv(BackDatas)
 	return int64(total), listItem, nil
+}
+
+func composeFileExists(workdir, configFile string) bool {
+	workdir = strings.TrimSpace(workdir)
+	configFile = strings.TrimSpace(configFile)
+	if configFile == "" {
+		return false
+	}
+	for _, item := range strings.Split(configFile, ",") {
+		file := strings.TrimSpace(item)
+		if file == "" {
+			continue
+		}
+		if !filepath.IsAbs(file) && workdir != "" {
+			file = filepath.Join(workdir, file)
+		}
+		file = filepath.Clean(file)
+		info, err := os.Stat(file)
+		if err == nil && !info.IsDir() {
+			return true
+		}
+	}
+	return false
 }
 
 func (u *ContainerService) TestCompose(req dto.ComposeCreate) (bool, error) {
@@ -203,13 +227,9 @@ func (u *ContainerService) CreateCompose(req dto.ComposeCreate) error {
 	if err := newComposeEnv(req.Path, req.Env); err != nil {
 		return err
 	}
-	pullImages := true
-	if req.PullImage != nil {
-		pullImages = *req.PullImage
-	}
 	go func() {
 		taskItem.AddSubTask(i18n.GetMsgByKey("ComposeCreate"), func(t *task.Task) error {
-			err := compose.UpWithTask(req.Path, t, pullImages)
+			err := compose.UpWithTask(req.Path, t, req.ForcePull)
 			t.LogWithStatus(i18n.GetMsgByKey("ComposeCreate"), err)
 			if err != nil {
 				_, _ = compose.Down(req.Path)
@@ -262,31 +282,43 @@ func (u *ContainerService) ComposeUpdate(req dto.ComposeUpdate) error {
 	if cmd.CheckIllegal(req.Name, req.Path) {
 		return buserr.New("ErrCmdIllegal")
 	}
-	oldFile, err := os.ReadFile(req.DetailPath)
+	taskItem, err := task.NewTaskWithOps(req.Name, task.TaskUpdate, task.TaskScopeCompose, req.TaskID, 1)
 	if err != nil {
-		return fmt.Errorf("load file with path %s failed, %v", req.DetailPath, err)
-	}
-	file, err := os.OpenFile(req.DetailPath, os.O_WRONLY|os.O_TRUNC, 0640)
-	if err != nil {
+		global.LOG.Errorf("new task for update compose failed, err: %v", err)
 		return err
 	}
-	defer file.Close()
-	write := bufio.NewWriter(file)
-	_, _ = write.WriteString(req.Content)
-	write.Flush()
+	go func() {
+		taskItem.AddSubTask(i18n.GetMsgByKey("TaskUpdate"), func(t *task.Task) error {
+			oldFile, err := os.ReadFile(req.DetailPath)
+			if err != nil {
+				return fmt.Errorf("load file with path %s failed, %v", req.DetailPath, err)
+			}
+			file, err := os.OpenFile(req.DetailPath, os.O_WRONLY|os.O_TRUNC, 0640)
+			if err != nil {
+				return err
+			}
+			defer file.Close()
+			write := bufio.NewWriter(file)
+			_, _ = write.WriteString(req.Content)
+			write.Flush()
 
-	global.LOG.Infof("docker-compose.yml %s has been replaced, now start to docker-compose restart", req.DetailPath)
-	if err := newComposeEnv(req.DetailPath, req.Env); err != nil {
-		return err
-	}
+			global.LOG.Infof("docker-compose.yml %s has been replaced, now start to docker-compose restart", req.DetailPath)
+			if err := newComposeEnv(req.DetailPath, req.Env); err != nil {
+				return err
+			}
 
-	if stdout, err := compose.Up(req.Path); err != nil {
-		global.LOG.Errorf("update failed when handle compose up, std: %s, err: %s, now try to recreate the old compose file", stdout, err)
-		if err := recreateCompose(string(oldFile), req.Path); err != nil {
-			return fmt.Errorf("update failed and recreate old compose file also failed, err: %v", err)
-		}
-		return fmt.Errorf("update failed when handle compose up, std: %v, err: %s", stdout, err)
-	}
+			if err := compose.UpWithTask(req.Path, t, req.ForcePull); err != nil {
+				global.LOG.Errorf("update failed when handle compose up, err: %s, now try to recreate the old compose file", err)
+				if err := recreateCompose(string(oldFile), req.Path); err != nil {
+					return fmt.Errorf("update failed and recreate old compose file also failed, err: %v", err)
+				}
+				return fmt.Errorf("update failed when handle compose up, err: %s", err)
+			}
+
+			return nil
+		}, nil)
+		_ = taskItem.Execute()
+	}()
 
 	return nil
 }
@@ -375,8 +407,11 @@ func (u *ContainerService) loadPath(req *dto.ComposeCreate) error {
 }
 
 func removeContainerForCompose(composeName, composePath string) error {
-	if stdout, err := compose.Operate(composePath, "down"); err != nil {
-		return errors.New(stdout)
+	if _, err := os.Stat(composePath); err == nil {
+		if stdout, err := compose.Operate(composePath, "down"); err != nil {
+			return errors.New(stdout)
+		}
+		return nil
 	}
 	var options container.ListOptions
 	options.All = true

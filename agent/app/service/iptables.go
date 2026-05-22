@@ -289,11 +289,11 @@ func (s *IptablesService) LoadChainStatus(req dto.OperationWithName) dto.Iptable
 	}
 	switch req.Name {
 	case iptables.Chain1PanelBasic:
-		data.IsBind, err = iptables.CheckChainBind(iptables.FilterTab, iptables.ChainInput, req.Name)
+		data.IsBind, _ = iptables.CheckChainBind(iptables.FilterTab, iptables.ChainInput, req.Name)
 	case iptables.Chain1PanelInput:
-		data.IsBind, err = iptables.CheckChainBind(iptables.FilterTab, iptables.ChainInput, req.Name)
+		data.IsBind, _ = iptables.CheckChainBind(iptables.FilterTab, iptables.ChainInput, req.Name)
 	case iptables.Chain1PanelOutput:
-		data.IsBind, err = iptables.CheckChainBind(iptables.FilterTab, iptables.ChainOutput, req.Name)
+		data.IsBind, _ = iptables.CheckChainBind(iptables.FilterTab, iptables.ChainOutput, req.Name)
 	}
 	return data
 }
@@ -359,10 +359,10 @@ func loadBindNumber(chain string) int {
 }
 
 func initPreRules() error {
-	if err := iptables.AddRule(iptables.FilterTab, iptables.Chain1PanelBasicBefore, iptables.IoRuleIn); err != nil {
+	if err := iptables.AddRule(iptables.FilterTab, iptables.Chain1PanelBasicBefore, "-i", "lo", "-j", "ACCEPT", "-m", "comment", "--comment", "Loopback Whitelist"); err != nil {
 		return err
 	}
-	if err := iptables.AddRule(iptables.FilterTab, iptables.Chain1PanelBasicBefore, iptables.EstablishedRule); err != nil {
+	if err := iptables.AddRule(iptables.FilterTab, iptables.Chain1PanelBasicBefore, "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "ACCEPT", "-m", "comment", "--comment", "ESTABLISHED Whitelist"); err != nil {
 		return err
 	}
 	panelPort := LoadPanelPort()
@@ -371,17 +371,17 @@ func initPreRules() error {
 	}
 	ports := []string{"80", "443", panelPort, loadSSHPort()}
 	for _, item := range ports {
-		if err := iptables.AddRule(iptables.FilterTab, iptables.Chain1PanelBasicBefore, fmt.Sprintf("-p tcp -m tcp --dport %v -j ACCEPT", item)); err != nil {
+		if err := iptables.AddRule(iptables.FilterTab, iptables.Chain1PanelBasicBefore, "-p", "tcp", "-m", "tcp", "--dport", item, "-j", "ACCEPT"); err != nil {
 			return err
 		}
 	}
-	if err := iptables.AddRule(iptables.FilterTab, iptables.Chain1PanelBasicAfter, "-p udp -m udp --dport 443 -j ACCEPT"); err != nil {
+	if err := iptables.AddRule(iptables.FilterTab, iptables.Chain1PanelBasicAfter, "-p", "udp", "-m", "udp", "--dport", "443", "-j", "ACCEPT"); err != nil {
 		return err
 	}
-	if err := iptables.AddRule(iptables.FilterTab, iptables.Chain1PanelBasicAfter, iptables.DropAllTcp); err != nil {
+	if err := iptables.AddRule(iptables.FilterTab, iptables.Chain1PanelBasicAfter, "-p", "tcp", "-j", "DROP"); err != nil {
 		return err
 	}
-	if err := iptables.AddRule(iptables.FilterTab, iptables.Chain1PanelBasicAfter, iptables.DropAllUdp); err != nil {
+	if err := iptables.AddRule(iptables.FilterTab, iptables.Chain1PanelBasicAfter, "-p", "udp", "-j", "DROP"); err != nil {
 		return err
 	}
 	return nil

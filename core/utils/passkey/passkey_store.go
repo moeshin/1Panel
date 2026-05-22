@@ -3,21 +3,22 @@ package passkey
 import (
 	"crypto/rand"
 	"encoding/base64"
-	"sync"
 	"time"
 
 	"github.com/1Panel-dev/1Panel/core/utils/common"
+	"github.com/1Panel-dev/1Panel/core/utils/ttlstore"
 	"github.com/go-webauthn/webauthn/webauthn"
 )
 
 const (
-	PasskeyUserIDSettingKey      = "PasskeyUserID"
-	PasskeyCredentialSettingKey  = "PasskeyCredentials"
-	PasskeyMaxCredentials        = 5
-	PasskeySessionTTL            = 5 * time.Minute
-	PasskeySessionKindLogin      = "login"
-	PasskeySessionKindRegister   = "register"
-	PasskeyCredentialNameDefault = "Passkey"
+	PasskeyUserIDSettingKey       = "PasskeyUserID"
+	PasskeyCredentialSettingKey   = "PasskeyCredentials"
+	PasskeyMaxCredentials         = 5
+	PasskeySessionTTL             = 5 * time.Minute
+	PasskeySessionKindLogin       = "login"
+	PasskeySessionKindRegister    = "register"
+	PasskeyCredentialNameDefault  = "Passkey"
+	PasskeySessionStoreMaxEntries = 1024
 )
 
 var passkeySessions = newPasskeySessionStore()
@@ -34,47 +35,29 @@ type passkeySession struct {
 }
 
 type passkeySessionStore struct {
-	mu    sync.Mutex
-	items map[string]passkeySession
+	store *ttlstore.Store[passkeySession]
 }
 
 func newPasskeySessionStore() *passkeySessionStore {
-	return &passkeySessionStore{items: make(map[string]passkeySession)}
+	return &passkeySessionStore{
+		store: ttlstore.New[passkeySession](PasskeySessionTTL, PasskeySessionStoreMaxEntries, generatePasskeySessionID),
+	}
 }
 
 func (s *passkeySessionStore) Set(kind, name string, session webauthn.SessionData) string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	sessionID := generatePasskeySessionID()
-	s.items[sessionID] = passkeySession{
-		Kind:      kind,
-		Name:      name,
-		Session:   session,
-		ExpiresAt: time.Now().Add(PasskeySessionTTL),
-	}
-	return sessionID
+	return s.store.Set(passkeySession{
+		Kind:    kind,
+		Name:    name,
+		Session: session,
+	})
 }
 
 func (s *passkeySessionStore) Get(sessionID string) (passkeySession, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	item, ok := s.items[sessionID]
-	if !ok {
-		return passkeySession{}, false
-	}
-	if time.Now().After(item.ExpiresAt) {
-		delete(s.items, sessionID)
-		return passkeySession{}, false
-	}
-	return item, true
+	return s.store.Get(sessionID)
 }
 
 func (s *passkeySessionStore) Delete(sessionID string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.items, sessionID)
+	s.store.Delete(sessionID)
 }
 
 func generatePasskeySessionID() string {

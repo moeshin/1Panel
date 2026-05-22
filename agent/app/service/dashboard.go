@@ -60,7 +60,9 @@ func (u *DashboardService) Restart(operation string) error {
 	case "system":
 		{
 			go func() {
-				if err := cmd.RunDefaultBashCf("%s reboot", cmd.SudoHandleCmd()); err != nil {
+				cmdMgr := cmd.NewCommandMgr()
+				err := cmdMgr.RunWithOptionalSudo("reboot")
+				if err != nil {
 					global.LOG.Errorf("handle reboot failed, %v", err)
 				}
 			}()
@@ -142,7 +144,7 @@ func (u *DashboardService) LoadCurrentInfoForNode() *dto.NodeCurrent {
 
 func (u *DashboardService) LoadBaseInfo(ioOption string, netOption string) (*dto.DashboardBase, error) {
 	var baseInfo dto.DashboardBase
-	hostInfo, err := psutil.HOST.GetHostInfo(false)
+	hostInfo, err := psutil.HOST.GetHostInfo(true)
 	if err != nil {
 		return nil, err
 	}
@@ -284,7 +286,7 @@ func (u *DashboardService) LoadAppLauncher(ctx *gin.Context) ([]dto.AppLauncher,
 		return data, err
 	}
 
-	showList, err := launcherRepo.ListName()
+	showList, _ := launcherRepo.ListName()
 	defaultList, err := appRepo.GetTopRecommend()
 	if err != nil {
 		return data, nil
@@ -361,6 +363,9 @@ func (u *DashboardService) LoadQuickOptions() []dto.QuickJump {
 		_ = copier.Copy(&item, &quick)
 		list = append(list, item)
 	}
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].Recommend < list[j].Recommend
+	})
 	return list
 }
 func (u *DashboardService) ChangeQuick(req dto.ChangeQuicks) error {
@@ -426,11 +431,17 @@ type diskInfo struct {
 func loadDiskInfo() []dto.DiskInfo {
 	var datas []dto.DiskInfo
 	cmdMgr := cmd.NewCommandMgr(cmd.WithTimeout(2 * time.Second))
-	format := `awk 'NR>1 && !/tmpfs|snap\/core|udev/ {printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", $1, $2, $3, $4, $5, $6, $7}'`
-	stdout, err := cmdMgr.RunWithStdout("bash", "-c", `timeout 2 df -hT -P | `+format)
+	format := `NR>1 && !/tmpfs|snap\/core|udev/ {printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", $1, $2, $3, $4, $5, $6, $7}`
+	stdout, err := cmdMgr.RunPipe(
+		cmd.PipeCommand{Name: "df", Args: []string{"-hT", "-P"}},
+		cmd.PipeCommand{Name: "awk", Args: []string{format}},
+	)
 	if err != nil {
 		cmdMgr2 := cmd.NewCommandMgr(cmd.WithTimeout(1 * time.Second))
-		stdout, err = cmdMgr2.RunWithStdout("bash", "-c", `timeout 1 df -lhT -P | `+format)
+		stdout, err = cmdMgr2.RunPipe(
+			cmd.PipeCommand{Name: "df", Args: []string{"-lhT", "-P"}},
+			cmd.PipeCommand{Name: "awk", Args: []string{format}},
+		)
 		if err != nil {
 			return datas
 		}
@@ -612,6 +623,9 @@ func loadQuickJump(base *dto.DashboardBase) {
 	website, _ := websiteRepo.GetBy()
 	base.WebsiteNumber = len(website)
 
+	agents, _ := agentRepo.List()
+	base.AgentNumber = len(agents)
+
 	postgresqlDbs, _ := postgresqlRepo.List()
 	mysqlDbs, _ := mysqlRepo.List()
 	base.DatabaseNumber = len(mysqlDbs) + len(postgresqlDbs)
@@ -625,6 +639,8 @@ func loadQuickJump(base *dto.DashboardBase) {
 	quicks := launcherRepo.ListQuickJump(false)
 	for i := 0; i < len(quicks); i++ {
 		switch quicks[i].Name {
+		case "Agent":
+			quicks[i].Detail = fmt.Sprintf("%d", base.AgentNumber)
 		case "Website":
 			quicks[i].Detail = fmt.Sprintf("%d", base.WebsiteNumber)
 		case "Database":
@@ -638,7 +654,7 @@ func loadQuickJump(base *dto.DashboardBase) {
 		_ = copier.Copy(&item, quicks[i])
 		base.QuickJumps = append(base.QuickJumps, item)
 	}
-	sort.Slice(quicks, func(i, j int) bool {
-		return quicks[i].Recommend < quicks[j].Recommend
+	sort.Slice(base.QuickJumps, func(i, j int) bool {
+		return base.QuickJumps[i].Recommend < base.QuickJumps[j].Recommend
 	})
 }

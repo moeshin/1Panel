@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/1Panel-dev/1Panel/core/app/dto"
 	"github.com/1Panel-dev/1Panel/core/app/model"
@@ -20,20 +21,56 @@ import (
 	"github.com/1Panel-dev/1Panel/core/utils/cmd"
 	"github.com/1Panel-dev/1Panel/core/utils/common"
 	"github.com/1Panel-dev/1Panel/core/utils/controller"
+	"github.com/1Panel-dev/1Panel/core/utils/ctl_conf"
 	"github.com/1Panel-dev/1Panel/core/utils/files"
 	"github.com/1Panel-dev/1Panel/core/utils/req_helper"
 	"github.com/1Panel-dev/1Panel/core/utils/xpack"
 )
 
-var (
-	svcBasePath, _     = controller.GetServicePath("")
-	svcCoreName, _     = controller.LoadServiceName("1panel-core")
-	selCoreName, _     = controller.SelectInitScript("1panel-core")
-	scriptCoreName, _  = controller.GetScriptName("1panel-core")
-	svcAgentName, _    = controller.LoadServiceName("1panel-agent")
-	selAgentName, _    = controller.SelectInitScript("1panel-agent")
-	scriptAgentName, _ = controller.GetScriptName("1panel-agent")
-)
+type serviceInfo struct {
+	basePath     string
+	coreName     string
+	agentName    string
+	selCoreName  string
+	selAgentName string
+}
+
+const minUpgradeFreeSpace = 500 << 20 // 500MB
+
+func loadServiceInfo() (serviceInfo, error) {
+	basePath, err := controller.GetServicePath("")
+	if err != nil {
+		global.LOG.Errorf("get service path failed: %v", err)
+		return serviceInfo{}, err
+	}
+	coreName, err := controller.LoadServiceName("1panel-core")
+	if err != nil {
+		global.LOG.Errorf("load core service name failed: %v", err)
+		return serviceInfo{}, err
+	}
+	agentName, err := controller.LoadServiceName("1panel-agent")
+	if err != nil {
+		global.LOG.Errorf("load agent service name failed: %v", err)
+		return serviceInfo{}, err
+	}
+	selCoreName, err := controller.SelectInitScript("1panel-core")
+	if err != nil {
+		global.LOG.Errorf("select core init script failed: %v", err)
+		return serviceInfo{}, err
+	}
+	selAgentName, err := controller.SelectInitScript("1panel-agent")
+	if err != nil {
+		global.LOG.Errorf("select agent init script failed: %v", err)
+		return serviceInfo{}, err
+	}
+	return serviceInfo{
+		basePath:     basePath,
+		coreName:     coreName,
+		agentName:    agentName,
+		selCoreName:  selCoreName,
+		selAgentName: selAgentName,
+	}, nil
+}
 
 type UpgradeService struct{}
 
@@ -50,7 +87,7 @@ func NewIUpgradeService() IUpgradeService {
 }
 
 func (u *UpgradeService) SearchUpgrade() (*dto.UpgradeInfo, error) {
-	if global.CONF.Base.IsOffLine {
+	if global.CONF.Base.IsOffline {
 		return &dto.UpgradeInfo{}, nil
 	}
 	var upgrade dto.UpgradeInfo
@@ -84,7 +121,7 @@ func (u *UpgradeService) SearchUpgrade() (*dto.UpgradeInfo, error) {
 	if strings.HasPrefix(upgrade.TestVersion, upgrade.LatestVersion+"-beta") {
 		upgrade.TestVersion = ""
 	}
-	notes, err := u.loadReleaseNotes(fmt.Sprintf("%s/%s/%s/release/1panel-%s-release-notes", global.CONF.RemoteURL.RepoUrl, mode, itemVersion, itemVersion))
+	notes, err := u.loadReleaseNotes(fmt.Sprintf("%s/%s/%s/release/1panel-%s-release-notes", global.RepoURL(), mode, itemVersion, itemVersion))
 	if err != nil {
 		return nil, fmt.Errorf("load releases-notes of version %s failed, err: %v", itemVersion, err)
 	}
@@ -97,7 +134,7 @@ func (u *UpgradeService) LoadNotes(req dto.Upgrade) (string, error) {
 	if strings.Contains(req.Version, "beta") {
 		mode = "beta"
 	}
-	notes, err := u.loadReleaseNotes(fmt.Sprintf("%s/%s/%s/release/1panel-%s-release-notes", global.CONF.RemoteURL.RepoUrl, mode, req.Version, req.Version))
+	notes, err := u.loadReleaseNotes(fmt.Sprintf("%s/%s/%s/release/1panel-%s-release-notes", global.RepoURL(), mode, req.Version, req.Version))
 	if err != nil {
 		return "", fmt.Errorf("load releases-notes of version %s failed, err: %v", req.Version, err)
 	}
@@ -106,6 +143,18 @@ func (u *UpgradeService) LoadNotes(req dto.Upgrade) (string, error) {
 
 func (u *UpgradeService) Upgrade(req dto.Upgrade) error {
 	global.LOG.Info("start to upgrade now...")
+	itemArch, err := loadArch()
+	if err != nil {
+		return err
+	}
+	svcInfo, err := loadServiceInfo()
+	if err != nil {
+		return err
+	}
+	if err := checkUpgradeSpace(); err != nil {
+		return err
+	}
+
 	baseDir := path.Join(global.CONF.Base.InstallDir, fmt.Sprintf("1panel/tmp/upgrade/%s", req.Version))
 	downloadDir := path.Join(baseDir, "downloads")
 	_ = os.RemoveAll(baseDir)
@@ -116,21 +165,17 @@ func (u *UpgradeService) Upgrade(req dto.Upgrade) error {
 	if err := os.MkdirAll(originalDir, os.ModePerm); err != nil {
 		return err
 	}
-	itemArch, err := loadArch()
-	if err != nil {
-		return err
-	}
 
 	mode := global.CONF.Base.Mode
 	if strings.Contains(req.Version, "beta") {
 		mode = "beta"
 	}
-	downloadPath := fmt.Sprintf("%s/%s/%s/release", global.CONF.RemoteURL.RepoUrl, mode, req.Version)
+	downloadPath := fmt.Sprintf("%s/%s/%s/release", global.RepoURL(), mode, req.Version)
 	fileName := fmt.Sprintf("1panel-%s-%s-%s.tar.gz", req.Version, "linux", itemArch)
 	_ = settingRepo.Update("SystemStatus", "Upgrading")
 	go func() {
-		oldLang := common.LoadParams("LANGUAGE")
-		if err := files.DownloadFileWithProxy(downloadPath+"/"+fileName, downloadDir+"/"+fileName); err != nil {
+		oldLang := ctl_conf.Load("LANGUAGE")
+		if err := files.DownloadFileWithProxyStream(downloadPath+"/"+fileName, downloadDir+"/"+fileName); err != nil {
 			global.LOG.Errorf("download service file failed, err: %v", err)
 			_ = settingRepo.Update("SystemStatus", "Free")
 			return
@@ -146,7 +191,7 @@ func (u *UpgradeService) Upgrade(req dto.Upgrade) error {
 		}
 		tmpDir := downloadDir + "/" + strings.ReplaceAll(fileName, ".tar.gz", "")
 
-		if err := u.handleBackup(originalDir); err != nil {
+		if err := u.handleBackup(originalDir, svcInfo); err != nil {
 			global.LOG.Errorf("handle backup original file failed, err: %v", err)
 			_ = settingRepo.Update("SystemStatus", "Free")
 			return
@@ -159,61 +204,63 @@ func (u *UpgradeService) Upgrade(req dto.Upgrade) error {
 		if err := files.CopyFileWithRename(path.Join(tmpDir, "1panel-core"), "/usr/local/bin/1panel-core"); err != nil {
 			global.LOG.Errorf("upgrade 1panel-core failed, err: %v", err)
 			_ = settingRepo.Update("SystemStatus", "Free")
-			u.handleRollback(originalDir, 1)
+			u.handleRollback(originalDir, 1, svcInfo)
 			return
 		}
 		if err := files.CopyFileWithRename(path.Join(tmpDir, "1panel-agent"), "/usr/local/bin/1panel-agent"); err != nil {
 			global.LOG.Errorf("upgrade 1panel-agent failed, err: %v", err)
 			_ = settingRepo.Update("SystemStatus", "Free")
-			u.handleRollback(originalDir, 1)
+			u.handleRollback(originalDir, 1, svcInfo)
 			return
 		}
 
-		if err := files.CopyItem(false, true, path.Join(tmpDir, "1pctl"), "/usr/local/bin"); err != nil {
+		if err := files.CopyFileWithRename(path.Join(tmpDir, "1pctl"), "/usr/local/bin/1pctl"); err != nil {
 			global.LOG.Errorf("upgrade 1pctl failed, err: %v", err)
 			_ = settingRepo.Update("SystemStatus", "Free")
-			u.handleRollback(originalDir, 2)
+			u.handleRollback(originalDir, 2, svcInfo)
 			return
 		}
-		if _, err := cmd.RunDefaultWithStdoutBashCf("sed -i -e 's#BASE_DIR=.*#BASE_DIR=%s#g' /usr/local/bin/1pctl", global.CONF.Base.InstallDir); err != nil {
+		if err := ctl_conf.UpdateInFile("/usr/local/bin/1pctl", "BASE_DIR", global.CONF.Base.InstallDir); err != nil {
 			global.LOG.Errorf("upgrade basedir in 1pctl failed, err: %v", err)
-			u.handleRollback(originalDir, 2)
+			u.handleRollback(originalDir, 2, svcInfo)
 			return
 		}
-		if _, err := cmd.RunDefaultWithStdoutBashCf("sed -i -e 's#LANGUAGE=.*#LANGUAGE=%s#g' /usr/local/bin/1pctl", oldLang); err != nil {
+		if err := ctl_conf.UpdateInFile("/usr/local/bin/1pctl", "LANGUAGE", oldLang); err != nil {
 			global.LOG.Errorf("upgrade basedir in 1pctl failed, err: %v", err)
-			u.handleRollback(originalDir, 2)
+			u.handleRollback(originalDir, 2, svcInfo)
 			return
 		}
 		initScriptPath := path.Join(tmpDir, "initscript")
 
-		if err := files.CopyItem(false, true, path.Join(initScriptPath, selCoreName), svcBasePath); err != nil {
-			global.LOG.Errorf("upgrade %s failed, err: %v", svcCoreName, err)
+		if err := files.CopyItem(false, true, path.Join(initScriptPath, svcInfo.selCoreName), svcInfo.basePath); err != nil {
+			global.LOG.Errorf("upgrade %s failed, err: %v", svcInfo.coreName, err)
 			_ = settingRepo.Update("SystemStatus", "Free")
-			u.handleRollback(originalDir, 3)
+			u.handleRollback(originalDir, 3, svcInfo)
 			return
 		}
-		if err := files.CopyItem(false, true, path.Join(initScriptPath, selAgentName), svcBasePath); err != nil {
-			global.LOG.Errorf("upgrade %s failed, err: %v", svcAgentName, err)
+		if err := files.CopyItem(false, true, path.Join(initScriptPath, svcInfo.selAgentName), svcInfo.basePath); err != nil {
+			global.LOG.Errorf("upgrade %s failed, err: %v", svcInfo.agentName, err)
 			_ = settingRepo.Update("SystemStatus", "Free")
-			u.handleRollback(originalDir, 3)
+			u.handleRollback(originalDir, 3, svcInfo)
 			return
 		}
 
 		if err := files.CopyItem(true, true, path.Join(tmpDir, "lang"), "/usr/local/bin"); err != nil {
 			global.LOG.Errorf("Update language files failed: %v", err)
 			_ = settingRepo.Update("SystemStatus", "Free")
-			u.handleRollback(originalDir, 4)
+			u.handleRollback(originalDir, 4, svcInfo)
+			return
 		}
-		if err := files.CopyItem(false, true, path.Join(tmpDir, "GeoIP.mmdb"), path.Join(global.CONF.Base.InstallDir, "1panel/geo")); err != nil {
+		if err := files.CopyFileWithRename(path.Join(tmpDir, "GeoIP.mmdb"), path.Join(global.CONF.Base.InstallDir, "1panel/geo/GeoIP.mmdb")); err != nil {
 			global.LOG.Warnf("Update GeoIP database failed: %v", err)
 			_ = settingRepo.Update("SystemStatus", "Free")
-			u.handleRollback(originalDir, 4)
+			u.handleRollback(originalDir, 4, svcInfo)
+			return
 		}
 
 		global.LOG.Info("upgrade successful!")
 		dropBackupCopies()
-		xpack.AutoUpgradeWithMaster()
+		xpack.MultiNodeProvider.AutoUpgradeWithMaster()
 		go writeLogs(req.Version)
 		_ = settingRepo.Update("SystemVersion", req.Version)
 		_ = global.AgentDB.Model(&model.Setting{}).Where("key = ?", "SystemVersion").Updates(map[string]interface{}{"value": req.Version}).Error
@@ -231,7 +278,11 @@ func (u *UpgradeService) Rollback(req dto.OperateByID) error {
 	if log.ID == 0 {
 		return buserr.New("ErrRecordNotFound")
 	}
-	u.handleRollback(log.BackupFile, 3)
+	svcInfo, err := loadServiceInfo()
+	if err != nil {
+		return err
+	}
+	u.handleRollback(log.BackupFile, 3, svcInfo)
 	return nil
 }
 
@@ -245,8 +296,21 @@ type noteDetailHelper struct {
 }
 
 func (u *UpgradeService) LoadRelease() ([]dto.ReleasesNotes, error) {
+	docSource, _ := settingRepo.GetValueByKey("DocSource")
+	lang, _ := settingRepo.GetValueByKey("Language")
 	var notes []dto.ReleasesNotes
-	resp, err := req_helper.HandleGet("https://1panel.cn/docs/v2/search/search_index.json")
+	url := "https://1panel.cn/docs/v2/search/search_index.json"
+	useIntlDocs := false
+	lang = strings.ToLower(strings.TrimSpace(lang))
+	if docSource == "withByRegion" {
+		useIntlDocs = global.CONF.Base.Edition == "intl"
+	} else {
+		useIntlDocs = lang != "zh"
+	}
+	if useIntlDocs {
+		url = "https://docs.1panel.pro/v2/search/search_index.json"
+	}
+	resp, err := req_helper.HandleGet(url)
 	if err != nil {
 		return notes, err
 	}
@@ -280,13 +344,13 @@ func analyzeDoc(version, content string) dto.ReleasesNotes {
 	}
 	item.CreatedAt = strings.ReplaceAll(strings.TrimSpace(parts[1]), "</p>", "")
 	for i := 1; i < len(parts); i++ {
-		if strings.Contains(parts[i], "问题修复") {
+		if strings.Contains(parts[i], "问题修复") || strings.Contains(parts[i], "Bug Fixes") {
 			item.FixCount = strings.Count(parts[i], "<li>")
 		}
-		if strings.Contains(parts[i], "新增功能") {
+		if strings.Contains(parts[i], "新增功能") || strings.Contains(parts[i], "New Features") {
 			item.NewCount = strings.Count(parts[i], "<li>")
 		}
-		if strings.Contains(parts[i], "功能优化") {
+		if strings.Contains(parts[i], "功能优化") || strings.Contains(parts[i], "Improvements") {
 			item.OptimizationCount = strings.Count(parts[i], "<li>")
 		}
 	}
@@ -295,7 +359,20 @@ func analyzeDoc(version, content string) dto.ReleasesNotes {
 	return item
 }
 
-func (u *UpgradeService) handleBackup(originalDir string) error {
+func checkUpgradeSpace() error {
+	dir := global.CONF.Base.InstallDir
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(dir, &stat); err != nil {
+		return err
+	}
+	avail := stat.Bavail * uint64(stat.Bsize)
+	if avail < minUpgradeFreeSpace {
+		return fmt.Errorf("available space of %s is %d MB, less than required 500MB", dir, avail>>20)
+	}
+	return nil
+}
+
+func (u *UpgradeService) handleBackup(originalDir string, svcInfo serviceInfo) error {
 	if err := files.CopyItem(false, true, "/usr/local/bin/1panel-core", originalDir); err != nil {
 		return err
 	}
@@ -308,10 +385,10 @@ func (u *UpgradeService) handleBackup(originalDir string) error {
 	if err := files.CopyItem(true, true, "/usr/local/bin/lang", originalDir); err != nil {
 		return err
 	}
-	if err := files.CopyItem(false, true, path.Join(svcBasePath, svcCoreName), originalDir); err != nil {
+	if err := files.CopyItem(false, true, path.Join(svcInfo.basePath, svcInfo.coreName), originalDir); err != nil {
 		return err
 	}
-	if err := files.CopyItem(false, true, path.Join(svcBasePath, svcAgentName), originalDir); err != nil {
+	if err := files.CopyItem(false, true, path.Join(svcInfo.basePath, svcInfo.agentName), originalDir); err != nil {
 		return err
 	}
 	if err := files.CopyItem(true, true, path.Join(global.CONF.Base.InstallDir, "1panel/db"), originalDir); err != nil {
@@ -323,7 +400,7 @@ func (u *UpgradeService) handleBackup(originalDir string) error {
 	return nil
 }
 
-func (u *UpgradeService) handleRollback(originalDir string, errStep int) {
+func (u *UpgradeService) handleRollback(originalDir string, errStep int, svcInfo serviceInfo) {
 	_ = settingRepo.Update("SystemStatus", "Free")
 	dbPath := path.Join(global.CONF.Base.InstallDir, "1panel")
 	if _, err := os.Stat(path.Join(originalDir, "db")); err == nil {
@@ -331,26 +408,26 @@ func (u *UpgradeService) handleRollback(originalDir string, errStep int) {
 			global.LOG.Errorf("rollback 1panel db failed, err: %v", err)
 		}
 	}
-	if err := files.CopyItem(false, true, path.Join(originalDir, "1panel-core"), "/usr/local/bin"); err != nil {
+	if err := files.CopyFileWithRename(path.Join(originalDir, "1panel-core"), "/usr/local/bin/1panel-core"); err != nil {
 		global.LOG.Errorf("rollback 1panel-core failed, err: %v", err)
 	}
-	if err := files.CopyItem(false, true, path.Join(originalDir, "1panel-agent"), "/usr/local/bin"); err != nil {
+	if err := files.CopyFileWithRename(path.Join(originalDir, "1panel-agent"), "/usr/local/bin/1panel-agent"); err != nil {
 		global.LOG.Errorf("rollback 1panel-agent failed, err: %v", err)
 	}
 	if errStep == 1 {
 		return
 	}
-	if err := files.CopyItem(false, true, path.Join(originalDir, "1pctl"), "/usr/local/bin"); err != nil {
+	if err := files.CopyFileWithRename(path.Join(originalDir, "1pctl"), "/usr/local/bin/1pctl"); err != nil {
 		global.LOG.Errorf("rollback 1pctl failed, err: %v", err)
 	}
 	if errStep == 2 {
 		return
 	}
-	if err := files.CopyItem(false, true, path.Join(originalDir, svcCoreName), svcBasePath); err != nil {
-		global.LOG.Errorf("rollback %s failed, err: %v", svcCoreName, err)
+	if err := files.CopyFileWithRename(path.Join(originalDir, svcInfo.coreName), path.Join(svcInfo.basePath, svcInfo.coreName)); err != nil {
+		global.LOG.Errorf("rollback %s failed, err: %v", svcInfo.coreName, err)
 	}
-	if err := files.CopyItem(false, true, path.Join(originalDir, svcAgentName), svcBasePath); err != nil {
-		global.LOG.Errorf("rollback %s failed, err: %v", svcAgentName, err)
+	if err := files.CopyFileWithRename(path.Join(originalDir, svcInfo.agentName), path.Join(svcInfo.basePath, svcInfo.agentName)); err != nil {
+		global.LOG.Errorf("rollback %s failed, err: %v", svcInfo.agentName, err)
 	}
 	if errStep == 3 {
 		return
@@ -358,7 +435,7 @@ func (u *UpgradeService) handleRollback(originalDir string, errStep int) {
 	if err := files.CopyItem(true, true, path.Join(originalDir, "lang"), "/usr/local/bin"); err != nil {
 		global.LOG.Errorf("rollback language files failed, err: %v", err)
 	}
-	if err := files.CopyItem(false, true, path.Join(originalDir, "GeoIP.mmdb"), path.Join(global.CONF.Base.InstallDir, "1panel/geo")); err != nil {
+	if err := files.CopyFileWithRename(path.Join(originalDir, "GeoIP.mmdb"), path.Join(global.CONF.Base.InstallDir, "1panel/geo/GeoIP.mmdb")); err != nil {
 		global.LOG.Errorf("rollback GeoIP database failed, err: %v", err)
 	}
 }
@@ -401,9 +478,9 @@ func (u *UpgradeService) loadVersionByMode(developer, currentVersion string) (st
 }
 
 func (u *UpgradeService) loadVersion(isLatest bool, currentVersion, mode string) string {
-	path := fmt.Sprintf("%s/%s/latest", global.CONF.RemoteURL.RepoUrl, mode)
+	path := fmt.Sprintf("%s/%s/latest", global.RepoURL(), mode)
 	if !isLatest {
-		path = fmt.Sprintf("%s/%s/latest.current", global.CONF.RemoteURL.RepoUrl, mode)
+		path = fmt.Sprintf("%s/%s/latest.current", global.RepoURL(), mode)
 	}
 	_, latestVersionRes, err := req_helper.HandleRequestWithProxy(path, http.MethodGet, constant.TimeOut20s)
 	if err != nil {
@@ -470,7 +547,7 @@ func (u *UpgradeService) loadReleaseNotes(path string) (string, error) {
 }
 
 func loadArch() (string, error) {
-	std, err := cmd.RunDefaultWithStdoutBashC("uname -a")
+	std, err := cmd.NewCommandMgr().RunWithStdout("uname", "-a")
 	if err != nil {
 		return "", fmt.Errorf("std: %s, err: %s", std, err.Error())
 	}

@@ -1,5 +1,5 @@
 <template>
-    <DrawerPro v-model="open" :header="$t('website.create')" size="60%" @close="handleClose">
+    <DrawerPro v-model="open" :header="$t('commons.button.create')" size="60%" @close="handleClose">
         <div v-loading="loading" :class="{ mask: !versionExist }">
             <el-form
                 ref="websiteForm"
@@ -68,6 +68,7 @@
                                     :key="index"
                                     :label="app.name"
                                     :value="app.id"
+                                    :disabled="isRestrictedDeploymentApp(app.key)"
                                 ></el-option>
                             </el-select>
                         </el-form-item>
@@ -192,7 +193,11 @@
                     </el-form-item>
                 </div>
                 <div v-else>
-                    <DomainCreate v-model:form="website" @gengerate="websiteForm.clearValidate()"></DomainCreate>
+                    <DomainCreate
+                        v-model:form="website"
+                        @gengerate="websiteForm.clearValidate()"
+                        @domain-blur="handleFirstDomainBlur"
+                    ></DomainCreate>
                 </div>
                 <el-divider content-position="left">
                     <el-text type="info" size="small">{{ $t('website.advancedSettings') }}</el-text>
@@ -250,7 +255,15 @@
                                     :label="ssl.primaryDomain"
                                     :value="ssl.id"
                                     :disabled="ssl.pem == ''"
-                                ></el-option>
+                                >
+                                    <span>{{ ssl.primaryDomain }}</span>
+                                    <el-tag class="tagClass" v-if="ssl.expireDate">
+                                        {{ dateFormatSimple(ssl.expireDate) }}
+                                    </el-tag>
+                                    <el-tag class="tagClass" v-if="ssl.organization">
+                                        {{ ssl.organization }}
+                                    </el-tag>
+                                </el-option>
                             </el-select>
                         </el-form-item>
                         <el-form-item :label="' '" v-if="websiteSSL && websiteSSL.id > 0">
@@ -262,7 +275,7 @@
                     <el-checkbox
                         @change="random"
                         v-model="website.enableFtp"
-                        :label="$t('commons.button.create') + ' FTP'"
+                        :label="$t('commons.button.create')"
                         size="large"
                     />
                     <span class="input-help">{{ $t('website.ftpHelper') }}</span>
@@ -411,7 +424,7 @@
     </DrawerPro>
 </template>
 
-<script lang="ts" setup name="CreateWebSite">
+<script lang="ts" setup>
 import AppInstallForm from '@/views/app-store/detail/form/index.vue';
 import SSLAlert from '@/views/website/website/create/site-alert/index.vue';
 import DomainCreate from '@/views/website/website/domain-create/index.vue';
@@ -438,14 +451,17 @@ import { reactive, ref, watch } from 'vue';
 import { MsgError, MsgSuccess } from '@/utils/message';
 import { SearchRuntimes } from '@/api/modules/runtime';
 import { Runtime } from '@/api/interface/runtime';
-import { getRandomStr, getRuntimeLabel } from '@/utils/util';
+import { getRandomStr } from '@/utils/id';
+import { getRuntimeLabel } from '@/utils/app-store';
+import { dateFormatSimple } from '@/utils/date';
 import { getAppService } from '@/api/modules/app';
 import { v4 as uuidv4 } from 'uuid';
-import { getAccountName } from '@/utils/util';
+import { getAccountName } from '@/utils/ssl';
 import { Website } from '@/api/interface/website';
-import { getPathByType } from '@/api/modules/files';
+import { loadWebsiteDir } from '@/api/modules/setting';
 import { getWebsiteTypes } from '@/global/mimetype';
 import { compareVersion } from '@/utils/version';
+defineOptions({ name: 'CreateWebSite' });
 
 type SSLItem = Website.SSLDTO & {
     organization?: string;
@@ -659,11 +675,35 @@ const getAppByService = async (key: string) => {
     dbServices.value = res.data;
 };
 
+const getProxyTargetFromApp = (app: Pick<App.AppInstalled, 'httpPort' | 'httpsPort'>) => {
+    if ((app.httpPort ?? 0) > 0) {
+        return {
+            protocol: 'http://',
+            address: `127.0.0.1:${app.httpPort}`,
+        };
+    }
+    if ((app.httpsPort ?? 0) > 0) {
+        return {
+            protocol: 'https://',
+            address: `127.0.0.1:${app.httpsPort}`,
+        };
+    }
+    return {
+        protocol: 'http://',
+        address: '',
+    };
+};
+
+const isRestrictedDeploymentApp = (appKey?: string) => {
+    return appKey === 'openclaw' || appKey === 'copaw' || appKey === 'hermes-agent';
+};
+
 const changeInstall = () => {
     appInstalls.value.forEach((app) => {
         if (app.id === website.value.appInstallId) {
-            website.value.proxyProtocol = 'http://';
-            website.value.proxyAddress = '127.0.0.1:' + app.httpPort;
+            const target = getProxyTargetFromApp(app);
+            website.value.proxyProtocol = target.protocol;
+            website.value.proxyAddress = target.address;
         }
     });
 };
@@ -671,9 +711,11 @@ const changeInstall = () => {
 const searchAppList = () => {
     searchApp(appReq).then((res) => {
         apps.value = res.data.items;
-        if (res.data.items.length > 0) {
-            website.value.appinstall.appId = res.data.items[0].id;
-            website.value.appinstall.appkey = res.data.items[0].key;
+
+        const selectableApp = res.data.items.find((item) => !isRestrictedDeploymentApp(item.key));
+        if (selectableApp) {
+            website.value.appinstall.appId = selectableApp.id;
+            website.value.appinstall.appkey = selectableApp.key;
             changeApp();
         }
     });
@@ -742,7 +784,7 @@ const acceptParams = async (openrestyVersion: string) => {
     }
     const websiteType = localStorage.getItem('website-type') || 'deployment';
     website.value.type = websiteType;
-    const dirRes = await getPathByType('websiteDir');
+    const dirRes = await loadWebsiteDir();
     staticPath.value = dirRes.data + '/sites/';
     changeType(websiteType);
 
@@ -1003,11 +1045,7 @@ const submit = async (formEl: FormInstance | undefined) => {
 
 watch(
     () => website.value.domains,
-    (value) => {
-        if (value && value.length > 0) {
-            const firstDomain = value[0].domain;
-            changeAlias(firstDomain);
-        }
+    () => {
         tryAutoSelectSSL();
     },
     { deep: true },
@@ -1042,8 +1080,22 @@ watch(
     { deep: true },
 );
 
-const changeAlias = (value: string) => {
-    const domain = value.split(':')[0];
+const handleFirstDomainBlur = (index: number) => {
+    if (index !== 0) {
+        return;
+    }
+    const firstDomain = website.value.domains?.[0]?.domain || '';
+    fillAliasFromDomainIfEmpty(firstDomain);
+};
+
+const fillAliasFromDomainIfEmpty = (value: string) => {
+    if (!value || website.value.alias.trim() !== '') {
+        return;
+    }
+    const domain = value.split(':')[0].trim();
+    if (!domain) {
+        return;
+    }
     website.value.alias = domain;
 };
 
@@ -1080,5 +1132,11 @@ defineExpose({
     text-overflow: ellipsis;
     white-space: nowrap;
     display: inline-block;
+}
+.tagClass {
+    float: right;
+    margin-right: 10px;
+    font-size: 12px;
+    margin-top: 5px;
 }
 </style>
